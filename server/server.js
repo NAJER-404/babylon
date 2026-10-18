@@ -53,8 +53,10 @@ const io = new Server(server, {
     credentials: true
   },
   transports: ['websocket', 'polling'],
-  pingInterval: 10000,
-  pingTimeout: 20000
+  perMessageDeflate: false, // Disabled per-message deflate for low latency (Part 1)
+  httpCompression: false,   // Disable compression for real-time game packets (Part 1)
+  pingInterval: 5000,       // Fast 5s ping interval (Part 1)
+  pingTimeout: 10000
 });
 
 const roomManager = new RoomManager(io);
@@ -255,6 +257,11 @@ io.on('connection', (socket) => {
     roomManager.handleShoot(socket.id, shootData);
   });
 
+  // Debug hitbox subscription (Part 0)
+  socket.on('debug_subscribe_hitboxes', (enabled) => {
+    roomManager.setDebugHitboxesSubscription(socket.id, !!enabled);
+  });
+
   // Rematch request
   socket.on('rematch', () => {
     roomManager.handleRematch(socket.id);
@@ -268,18 +275,33 @@ io.on('connection', (socket) => {
   });
 });
 
-// Fixed 30 Hz world state tick broadcast
-const TICK_INTERVAL_MS = 33;
-setInterval(() => {
-  roomManager.broadcastTick();
-}, TICK_INTERVAL_MS);
+// Drift-corrected 30 Hz world state tick loop (Part 1 & Part 5)
+const TICK_INTERVAL_MS = 33.333;
+let nextTickTarget = Date.now() + TICK_INTERVAL_MS;
+
+function scheduleNextServerTick() {
+  const now = Date.now();
+  try {
+    roomManager.broadcastTick();
+  } catch (err) {
+    console.error('[Server Tick Error]:', err);
+  }
+  nextTickTarget += TICK_INTERVAL_MS;
+  // If accumulated drift is too large (> 100ms), snap forward
+  if (now - nextTickTarget > 100) {
+    nextTickTarget = now + TICK_INTERVAL_MS;
+  }
+  const delay = Math.max(1, Math.min(50, nextTickTarget - now));
+  setTimeout(scheduleNextServerTick, delay);
+}
+scheduleNextServerTick();
 
 // Listen on 0.0.0.0 for Railway container routing
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Babylon Arena Server] Initialized`);
   console.log(`[Environment] NODE_ENV = ${process.env.NODE_ENV || 'development'}`);
   console.log(`[Host] Listening on http://0.0.0.0:${PORT}`);
-  console.log(`[Tick Rate] Broadcasting at ~${Math.round(1000 / TICK_INTERVAL_MS)} Hz`);
+  console.log(`[Tick Rate] Broadcasting at ~${Math.round(1000 / TICK_INTERVAL_MS)} Hz (drift-corrected)`);
   console.log(`[Capacity] Max active rooms: ${MAX_TOTAL_ROOMS}`);
 });
 

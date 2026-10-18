@@ -2,7 +2,10 @@
 import {
   Engine,
   Scene,
-  Vector3
+  Vector3,
+  MeshBuilder,
+  StandardMaterial,
+  Color3
 } from '@babylonjs/core';
 import { CONFIG } from './config.js';
 import { AudioManager } from './audio.js';
@@ -59,6 +62,12 @@ export class Game {
     this.opponent = null;
     this.botAI = null;
 
+    // Hitbox Debug State
+    this.isShowingClientHitboxes = false;
+    this.isShowingServerHitboxes = false;
+    this.serverHitboxMeshes = null;
+    this.serverHitboxMat = null;
+
     // Bullet Cam & Cinematic Subsystems
     this.scopeOverlay = null;
     this.xrayEffect = null;
@@ -108,6 +117,7 @@ export class Game {
         this.audio,
         this.ui
       );
+      this.bulletCam.prewarm(this.scene);
       this.player.setScopeOverlay(this.scopeOverlay);
 
       // 5. Wire Player Callbacks
@@ -276,6 +286,27 @@ export class Game {
 
       onBulletCamToggle: (val) => {
         if (this.bulletCam) this.bulletCam.setEnabled(val);
+      },
+
+      onToggleClientHitboxes: () => {
+        this.isShowingClientHitboxes = !this.isShowingClientHitboxes;
+        this.ui.setClientHitboxesButtonState(this.isShowingClientHitboxes);
+        if (this.opponent) {
+          this.opponent.setHitboxesWireframe(this.isShowingClientHitboxes);
+        }
+      },
+
+      onToggleServerHitboxes: () => {
+        this.isShowingServerHitboxes = !this.isShowingServerHitboxes;
+        this.ui.setServerHitboxesButtonState(this.isShowingServerHitboxes);
+        this.network.subscribeServerHitboxes(this.isShowingServerHitboxes);
+        if (!this.isShowingServerHitboxes) {
+          this.clearServerHitboxMeshes();
+        }
+      },
+
+      onSimulatedNetworkChange: (latencyMs, packetLossRate) => {
+        this.network.setSimulatedNetwork(latencyMs, packetLossRate);
       }
     });
   }
@@ -304,10 +335,23 @@ export class Game {
       const myId = this.network.socket?.id;
       for (const p of data.players) {
         if (p.socketId !== myId && this.opponent) {
+          this.opponent.setServerClockOffset(this.network.serverClockOffset);
           this.opponent.pushNetworkUpdate(p);
         } else if (p.socketId === myId) {
           this.ui.updateHealth(p.health);
         }
+      }
+    };
+
+    this.network.onPositionCorrection = (data) => {
+      if (data && data.position) {
+        this.player.applyPositionCorrection(data.position);
+      }
+    };
+
+    this.network.onServerHitboxes = (data) => {
+      if (this.isShowingServerHitboxes) {
+        this.renderServerHitboxes(data);
       }
     };
 
@@ -332,42 +376,34 @@ export class Game {
       const myId = this.network.socket?.id;
       const isShooter = data.shooterId === myId;
       const isVictim = data.victimId === myId;
-      const isHeadshot = data.hitPart === 'head';
+      const isHeadshot = data.isHeadshot || data.hitPart === 'head';
 
       // Lock input for both players during replay
       this.player.setInputLocked(true);
       if (this.scopeOverlay) this.scopeOverlay.forceReset();
 
-      const startPos = new Vector3(data.origin.x, data.origin.y, data.origin.z);
-      const hitPos = new Vector3(data.hitPoint.x, data.hitPoint.y, data.hitPoint.z);
+      const startPos = data.shooterPos || data.origin || { x: 0, y: 1.5, z: 0 };
+      const hitPos = data.hitPoint || data.victimPos || { x: 0, y: 1.4, z: 0 };
+
+      const startVec = new Vector3(startPos.x, startPos.y, startPos.z);
+      const hitVec = new Vector3(hitPos.x, hitPos.y, hitPos.z);
+
+      const killInfo = {
+        killId: data.killId,
+        killer: data.shooterName || (isShooter ? 'You' : (this.opponent?.name || 'Opponent')),
+        victim: data.victimName || (isVictim ? 'You' : (this.opponent?.name || 'Opponent')),
+        isHeadshot,
+        weaponType: data.weaponType || 'sniper',
+        timestamp: data.timestamp
+      };
 
       if (isShooter && this.bulletCam && this.opponent) {
         // Shooter perspective: bullet follow / tracking
-        this.bulletCam.start(
-          'shooter',
-          startPos,
-          hitPos,
-          this.opponent,
-          isHeadshot,
-          { killer: 'You', victim: this.opponent.name || 'Opponent', isHeadshot, weaponType: data.weaponType },
-          () => {
-            // Replay visually complete
-          }
-        );
+        this.bulletCam.start('shooter', startVec, hitVec, this.opponent, isHeadshot, killInfo, () => {});
       } else if (isVictim && this.bulletCam) {
         // Victim perspective: cinematic incoming view
         this.player.die();
-        this.bulletCam.start(
-          'victim',
-          startPos,
-          hitPos,
-          this.player,
-          isHeadshot,
-          { killer: this.opponent?.name || 'Opponent', victim: 'You', isHeadshot, weaponType: data.weaponType },
-          () => {
-            // Replay visually complete
-          }
-        );
+        this.bulletCam.start('victim', startVec, hitVec, this.player, isHeadshot, killInfo, () => {});
       }
     };
 
@@ -499,6 +535,9 @@ export class Game {
     this.player.spawnAt(CONFIG.GAME.SPAWNS[0], 1);
     this.opponent.setPositionAndRotation(CONFIG.GAME.SPAWNS[1], CONFIG.GAME.SPAWNS[1].rotY);
     this.opponent.setVisible(true);
+    if (this.isShowingClientHitboxes) {
+      this.opponent.setHitboxesWireframe(true);
+    }
 
     this.weapon.resetAmmo();
     this.ui.updateHealth(CONFIG.GAME.MAX_HEALTH);
@@ -543,6 +582,10 @@ export class Game {
 
     this.opponent.setPositionAndRotation(oppInfo.spawn, oppInfo.spawn.rotY);
     this.opponent.setVisible(true);
+    this.opponent.setServerClockOffset(this.network.serverClockOffset);
+    if (this.isShowingClientHitboxes) {
+      this.opponent.setHitboxesWireframe(true);
+    }
 
     this.weapon.resetAmmo();
     this.ui.updateHealth(CONFIG.GAME.MAX_HEALTH);
@@ -649,6 +692,7 @@ export class Game {
     // In Online 1v1 Mode:
     if (this.mode === GAME_MODE.ONLINE) {
       this.network.sendShoot({
+        shotId: result.shotId,
         origin: result.rayOrigin || { x: this.player.camera.position.x, y: this.player.camera.position.y, z: this.player.camera.position.z },
         direction: result.rayDirection || { x: this.player.camera.getForwardRay().direction.x, y: this.player.camera.getForwardRay().direction.y, z: this.player.camera.getForwardRay().direction.z },
         weaponType: result.weaponType,
@@ -700,11 +744,45 @@ export class Game {
       this.opponent = null;
     }
     this.botAI = null;
+    this.clearServerHitboxMeshes();
 
     inputManager.clearAll();
     if (this.scopeOverlay) this.scopeOverlay.forceReset();
     this.player.exitPointerLock();
     this.ui.showMainMenu();
+  }
+
+  renderServerHitboxes(data) {
+    if (!this.serverHitboxMeshes) {
+      this.serverHitboxMeshes = {};
+      this.serverHitboxMat = new StandardMaterial('serverHitboxMat', this.scene);
+      this.serverHitboxMat.wireframe = true;
+      this.serverHitboxMat.emissiveColor = new Color3(1.0, 0.4, 0.1);
+      this.serverHitboxMat.disableLighting = true;
+    }
+
+    ['head', 'body', 'legs'].forEach(part => {
+      const partData = data[part];
+      if (!partData) return;
+
+      const key = `${data.playerId}_${part}`;
+      let mesh = this.serverHitboxMeshes[key];
+      if (!mesh) {
+        mesh = MeshBuilder.CreateSphere(key, { diameter: partData.radius * 2, segments: 8 }, this.scene);
+        mesh.material = this.serverHitboxMat;
+        mesh.isPickable = false;
+        this.serverHitboxMeshes[key] = mesh;
+      }
+      mesh.position.set(partData.x, partData.y, partData.z);
+      mesh.isVisible = true;
+    });
+  }
+
+  clearServerHitboxMeshes() {
+    if (this.serverHitboxMeshes) {
+      Object.values(this.serverHitboxMeshes).forEach(m => m.dispose());
+      this.serverHitboxMeshes = {};
+    }
   }
 
   renderTick() {
@@ -770,25 +848,37 @@ export class Game {
         this.opponent.update(scaledDt);
       }
 
-      // 10. Fixed 20 Hz Network updates (every 50ms)
+      // 10. Fixed 30 Hz Network updates (using compact protocol)
+      const sendInterval = 1000 / (CONFIG.NETWORK?.SEND_RATE_HZ || 30);
       if (this.mode === GAME_MODE.ONLINE && this.player.isAlive && !this.bulletCam?.isActive) {
         this.networkUpdateTimer += rawDt;
-        if (this.networkUpdateTimer >= 50) {
+        if (this.networkUpdateTimer >= sendInterval) {
           this.networkUpdateTimer = 0;
-          this.network.sendPlayerUpdate(this.player.getNetworkState());
+          this.network.sendPlayerUpdate(
+            this.player.getCompactNetworkState(this.network.getEstimatedServerTime())
+          );
         }
       }
 
-      // 11. Performance Debug Overlay Update (every 250ms)
+      // 11. Performance & Telemetry Debug Overlay Update (every 200ms)
       this.debugUpdateTimer += rawDt;
-      if (this.debugUpdateTimer >= 250) {
+      if (this.debugUpdateTimer >= 200) {
         this.debugUpdateTimer = 0;
-        this.ui.updateDebugMetrics(
-          this.engine.getFps(),
-          this.scene.getActiveMeshes().length,
-          this.scene.getActiveMeshes().length,
-          this.scene.getActiveParticles()
-        );
+        this.ui.updateDebugMetrics({
+          fps: this.engine.getFps(),
+          ping: this.network.smoothedPing,
+          maxPing: this.network.maxPing,
+          jitter: this.network.jitter,
+          serverTick: 30,
+          ppsIn: this.network.ppsIn,
+          ppsOut: this.network.ppsOut,
+          weapon: this.weapon.currentWeaponId,
+          speed: this.player.currentSpeed || 0,
+          killCamState: this.bulletCam.camState,
+          timeScale: timeManager.timeScale,
+          events: this.network.recentEvents
+        });
+        this.ui.updatePing(this.network.smoothedPing, this.network.jitter);
       }
     } catch (err) {
       if (!this._hasReportedRenderError) {

@@ -65,13 +65,23 @@ export class UIManager {
       matchup: document.getElementById('countdown-matchup')
     };
 
-    // Performance Debug Overlay
+    // Performance & Telemetry Debug Overlay
     this.debug = {
       overlay: document.getElementById('debug-overlay'),
+      ping: document.getElementById('debug-ping'),
+      jitter: document.getElementById('debug-jitter'),
       fps: document.getElementById('debug-fps'),
-      drawCalls: document.getElementById('debug-draw-calls'),
-      activeMeshes: document.getElementById('debug-active-meshes'),
-      particles: document.getElementById('debug-particles')
+      serverTick: document.getElementById('debug-server-tick'),
+      packetRate: document.getElementById('debug-packet-rate'),
+      weapon: document.getElementById('debug-weapon'),
+      speed: document.getElementById('debug-speed'),
+      killCamState: document.getElementById('debug-killcam-state'),
+      timeScale: document.getElementById('debug-timescale'),
+      clientHitboxBtn: document.getElementById('btn-toggle-client-hitboxes'),
+      serverHitboxBtn: document.getElementById('btn-toggle-server-hitboxes'),
+      simLatencySelect: document.getElementById('select-debug-latency'),
+      simLossSelect: document.getElementById('select-debug-loss'),
+      eventsList: document.getElementById('debug-server-events')
     };
 
     // Online UI elements
@@ -320,6 +330,27 @@ export class UIManager {
         this.hideAllModals();
       });
     });
+
+    // 11. Debug Controls (Hitboxes & Network Sim)
+    this.debug.clientHitboxBtn?.addEventListener('click', () => {
+      this.callbacks.onToggleClientHitboxes?.();
+    });
+
+    this.debug.serverHitboxBtn?.addEventListener('click', () => {
+      this.callbacks.onToggleServerHitboxes?.();
+    });
+
+    this.debug.simLatencySelect?.addEventListener('change', (e) => {
+      const lat = parseInt(e.target.value, 10) || 0;
+      const loss = parseFloat(this.debug.simLossSelect?.value || '0');
+      this.callbacks.onSimulatedNetworkChange?.(lat, loss);
+    });
+
+    this.debug.simLossSelect?.addEventListener('change', (e) => {
+      const loss = parseFloat(e.target.value) || 0;
+      const lat = parseInt(this.debug.simLatencySelect?.value || '0', 10) || 0;
+      this.callbacks.onSimulatedNetworkChange?.(lat, loss);
+    });
   }
 
   triggerJoinRoom() {
@@ -399,12 +430,56 @@ export class UIManager {
     }
   }
 
-  updateDebugMetrics(fps, drawCalls, activeMeshes, activeParticles) {
+  updateDebugMetrics(data = {}) {
     if (!this.isDebugVisible) return;
-    if (this.debug.fps) this.debug.fps.textContent = Math.round(fps);
-    if (this.debug.drawCalls) this.debug.drawCalls.textContent = drawCalls;
-    if (this.debug.activeMeshes) this.debug.activeMeshes.textContent = activeMeshes;
-    if (this.debug.particles) this.debug.particles.textContent = activeParticles;
+    if (this.debug.fps && data.fps !== undefined) {
+      this.debug.fps.textContent = Math.round(data.fps);
+    }
+    if (this.debug.ping && data.ping !== undefined) {
+      this.debug.ping.textContent = `${Math.round(data.ping)}ms (max ${Math.round(data.maxPing || data.ping)}ms)`;
+    }
+    if (this.debug.jitter && data.jitter !== undefined) {
+      this.debug.jitter.textContent = `${Math.round(data.jitter)}ms`;
+    }
+    if (this.debug.serverTick && data.serverTick !== undefined) {
+      this.debug.serverTick.textContent = `${data.serverTick} Hz`;
+    }
+    if (this.debug.packetRate) {
+      this.debug.packetRate.textContent = `${data.ppsIn || 0} in / ${data.ppsOut || 0} out pps`;
+    }
+    if (this.debug.weapon && data.weapon) {
+      this.debug.weapon.textContent = data.weapon.toUpperCase();
+    }
+    if (this.debug.speed !== undefined && data.speed !== undefined) {
+      this.debug.speed.textContent = `${data.speed.toFixed(2)} u/s`;
+    }
+    if (this.debug.killCamState && data.killCamState) {
+      this.debug.killCamState.textContent = data.killCamState;
+    }
+    if (this.debug.timeScale !== undefined && data.timeScale !== undefined) {
+      this.debug.timeScale.textContent = `${data.timeScale.toFixed(2)}x`;
+    }
+    if (this.debug.eventsList && Array.isArray(data.events)) {
+      if (data.events.length === 0) {
+        this.debug.eventsList.innerHTML = '<div class="debug-event-item">No events yet</div>';
+      } else {
+        this.debug.eventsList.innerHTML = data.events.map(ev => `<div class="debug-event-item">${ev}</div>`).join('');
+      }
+    }
+  }
+
+  setClientHitboxesButtonState(active) {
+    if (this.debug.clientHitboxBtn) {
+      this.debug.clientHitboxBtn.textContent = `CLIENT HITBOXES: ${active ? 'ON' : 'OFF'}`;
+      this.debug.clientHitboxBtn.classList.toggle('active', !!active);
+    }
+  }
+
+  setServerHitboxesButtonState(active) {
+    if (this.debug.serverHitboxBtn) {
+      this.debug.serverHitboxBtn.textContent = `SERVER HITBOXES: ${active ? 'ON' : 'OFF'}`;
+      this.debug.serverHitboxBtn.classList.toggle('active', !!active);
+    }
   }
 
   hideLoadingScreen() {
@@ -538,12 +613,13 @@ export class UIManager {
     }
   }
 
-  updatePing(pingMs) {
+  updatePing(pingMs, jitterMs = 0) {
     if (!this.hud.pingVal) return;
-    this.hud.pingVal.textContent = `${pingMs}ms`;
-    if (pingMs < 60) {
+    const jitterIcon = jitterMs > 25 ? ' ⚠️' : '';
+    this.hud.pingVal.textContent = `${Math.round(pingMs)}ms${jitterIcon}`;
+    if (pingMs < 80) {
       this.hud.pingVal.style.color = '#10b981';
-    } else if (pingMs < 120) {
+    } else if (pingMs <= 150) {
       this.hud.pingVal.style.color = '#f59e0b';
     } else {
       this.hud.pingVal.style.color = '#ef4444';

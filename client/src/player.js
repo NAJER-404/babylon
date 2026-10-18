@@ -380,7 +380,39 @@ export class PlayerController {
       this.isProtected = false;
     }
 
-    // 4. Input Gathering
+    // 4. Fixed Timestep Physics Simulation at 60 Hz (Part 4)
+    const FIXED_DT = 1 / 60;
+    const clampedDt = Math.min(0.1, dt);
+    this.physicsAccumulator = (this.physicsAccumulator || 0) + clampedDt;
+
+    while (this.physicsAccumulator >= FIXED_DT) {
+      this.physicsStep(FIXED_DT);
+      this.physicsAccumulator -= FIXED_DT;
+    }
+
+    this.currentSpeed = Math.hypot(this.velocity.x, this.velocity.z);
+
+    // 5. Head-bobbing
+    const activeWep = this.weaponSystem?.activeWeaponId || 'sniper';
+    const kinematics = CONFIG.PLAYER.KINEMATICS[activeWep] || CONFIG.PLAYER.KINEMATICS.sniper;
+    const scopeBlend = (this.scopeOverlay && activeWep === 'sniper') ? this.scopeOverlay.getBlend() : 0;
+    const isScoped = scopeBlend > 0.05;
+
+    let bobOffset = 0;
+    if (this.isGrounded && this.isMoving && !isScoped) {
+      this.bobTimer += dt * CONFIG.PLAYER.HEADBOB_FREQ * (this.currentSpeed / (kinematics.WALK_SPEED || 4.5));
+      bobOffset = Math.sin(this.bobTimer) * CONFIG.PLAYER.HEADBOB_AMP;
+    } else {
+      this.bobTimer = 0;
+    }
+
+    this.camera.position.x = this.colliderMesh.position.x;
+    this.camera.position.y = this.colliderMesh.position.y - (CONFIG.PLAYER.COLLIDER_HEIGHT / 2) + this.currentEyeHeight + bobOffset;
+    this.camera.position.z = this.colliderMesh.position.z;
+  }
+
+  physicsStep(dt) {
+    // 1. Input Gathering
     let moveX = 0;
     let moveZ = 0;
     if (inputManager.isAnyKeyDown(['KeyW', 'ArrowUp'])) moveZ += 1;
@@ -406,7 +438,7 @@ export class PlayerController {
     const canSprint = isShiftHeld && moveZ > 0 && !this.isCrouching && !isScoped && this.stamina > 0.1;
     this.isSprinting = canSprint;
 
-    // 5. Stamina Depletion & Regeneration
+    // 2. Stamina Depletion & Regeneration
     if (this.isSprinting && this.isMoving) {
       this.stamina = Math.max(0, this.stamina - dt);
       this.staminaRegenDelayTimer = CONFIG.PLAYER.SPRINT_STAMINA_REGEN_DELAY;
@@ -425,11 +457,11 @@ export class PlayerController {
       this.onStaminaChangeCallback(this.stamina, CONFIG.PLAYER.SPRINT_STAMINA_MAX);
     }
 
-    // 6. Camera Eye Height
+    // 3. Camera Eye Height
     const targetHeight = this.isCrouching ? CONFIG.PLAYER.CROUCH_HEIGHT : CONFIG.PLAYER.EYE_HEIGHT;
     this.currentEyeHeight += (targetHeight - this.currentEyeHeight) * Math.min(1.0, 16.0 * dt);
 
-    // 7. Calculate Desired Target Speed (Derived from Active Weapon Profile)
+    // 4. Calculate Desired Target Speed (Part 4: Melee knife walk 7.0 / sprint 12.5 / crouch 4.0)
     let targetSpeed = kinematics.WALK_SPEED;
     if (this.isCrouching) {
       targetSpeed = kinematics.CROUCH_SPEED;
@@ -437,11 +469,12 @@ export class PlayerController {
       targetSpeed = kinematics.SPRINT_SPEED;
     }
 
-    if (isScoped && this.scopeOverlay) {
+    // Knife is NEVER affected by sniper scope multiplier
+    if (activeWep === 'sniper' && isScoped && this.scopeOverlay) {
       targetSpeed *= this.scopeOverlay.getMoveSpeedMultiplier();
     }
 
-    // 8. World Space Movement Wish Direction
+    // 5. World Space Movement Wish Direction
     let wishDir = new Vector3(0, 0, 0);
     if (this.isMoving) {
       const normX = moveX / inputLen;
@@ -456,10 +489,11 @@ export class PlayerController {
     const targetVx = wishDir.x * (this.isMoving ? targetSpeed : 0);
     const targetVz = wishDir.z * (this.isMoving ? targetSpeed : 0);
 
-    // 9. Smooth Acceleration & Deceleration with Deadzone
+    // 6. Snappy Acceleration & Deceleration (Part 4: ~0.1s for knife)
+    const baseAccel = kinematics.ACCELERATION || (this.isMoving ? CONFIG.PLAYER.ACCELERATION : CONFIG.PLAYER.DECELERATION);
     const accelRate = this.isGrounded
-      ? (this.isMoving ? CONFIG.PLAYER.ACCELERATION : CONFIG.PLAYER.DECELERATION)
-      : CONFIG.PLAYER.ACCELERATION * (kinematics.AIR_CONTROL || 0.25);
+      ? baseAccel
+      : baseAccel * (kinematics.AIR_CONTROL || 0.25);
 
     this.velocity.x += (targetVx - this.velocity.x) * Math.min(1.0, accelRate * dt);
     this.velocity.z += (targetVz - this.velocity.z) * Math.min(1.0, accelRate * dt);
@@ -470,16 +504,16 @@ export class PlayerController {
       if (Math.abs(this.velocity.z) < deadzone) this.velocity.z = 0;
     }
 
-    // Grounded Jump (higher jump with knife equipped!)
+    // 7. Grounded Jump (Part 4: 2x sniper jump velocity for knife = 10.4)
     if (isJumpPressed && this.isGrounded && !this.isCrouching) {
       this.velocity.y = kinematics.JUMP_VELOCITY || CONFIG.PLAYER.JUMP_VELOCITY;
       this.isGrounded = false;
     }
 
-    // 10. Gravity
+    // 8. Gravity
     this.velocity.y += CONFIG.PLAYER.GRAVITY * dt;
 
-    // 11. Move Player Collider Mesh
+    // 9. Move Player Collider Mesh
     const prevY = this.colliderMesh.position.y;
     const displacement = this.velocity.scale(dt);
     this.colliderMesh.moveWithCollisions(displacement);
@@ -504,20 +538,21 @@ export class PlayerController {
     const arenaBound = (CONFIG.GAME.MAP_SIZE / 2) - 1.2;
     this.colliderMesh.position.x = Math.max(-arenaBound, Math.min(arenaBound, this.colliderMesh.position.x));
     this.colliderMesh.position.z = Math.max(-arenaBound, Math.min(arenaBound, this.colliderMesh.position.z));
+  }
 
-    // 12. Head-bobbing
-    let bobOffset = 0;
-    if (this.isGrounded && this.isMoving && !isScoped) {
-      const speed = Math.hypot(this.velocity.x, this.velocity.z);
-      this.bobTimer += dt * CONFIG.PLAYER.HEADBOB_FREQ * (speed / kinematics.WALK_SPEED);
-      bobOffset = Math.sin(this.bobTimer) * CONFIG.PLAYER.HEADBOB_AMP;
-    } else {
-      this.bobTimer = 0;
+  applyPositionCorrection(correctedPos) {
+    if (!correctedPos || !this.colliderMesh) return;
+    const dx = correctedPos.x - this.colliderMesh.position.x;
+    const dz = correctedPos.z - this.colliderMesh.position.z;
+    const distErr = Math.hypot(dx, dz);
+
+    if (distErr > 2.0) {
+      // Smoothly snap to server authoritative position if discrepancy > 2 units (Part 4)
+      this.colliderMesh.position.x = correctedPos.x;
+      this.colliderMesh.position.z = correctedPos.z;
+      this.velocity.x = 0;
+      this.velocity.z = 0;
     }
-
-    this.camera.position.x = this.colliderMesh.position.x;
-    this.camera.position.y = this.colliderMesh.position.y - (CONFIG.PLAYER.COLLIDER_HEIGHT / 2) + this.currentEyeHeight + bobOffset;
-    this.camera.position.z = this.colliderMesh.position.z;
   }
 
   getMovementState() {
@@ -527,7 +562,29 @@ export class PlayerController {
       isCrouching: this.isCrouching,
       isGrounded: this.isGrounded,
       isScoped: (this.scopeOverlay && this.weaponSystem?.activeWeaponId === 'sniper') ? this.scopeOverlay.isScoped() : false,
-      speed: Math.hypot(this.velocity.x, this.velocity.z)
+      speed: this.currentSpeed || Math.hypot(this.velocity.x, this.velocity.z)
+    };
+  }
+
+  // Compact 30 Hz Network State (Part 1)
+  getCompactNetworkState(estimatedServerTime) {
+    const posX = Math.round(this.camera.position.x * 100) / 100;
+    const posY = Math.round(this.camera.position.y * 100) / 100;
+    const posZ = Math.round(this.camera.position.z * 100) / 100;
+    const pitch = Math.round(this.pitch * 100) / 100;
+    const yaw = Math.round(this.yaw * 100) / 100;
+
+    return {
+      x: posX,
+      y: posY,
+      z: posZ,
+      rx: pitch,
+      ry: yaw,
+      w: this.weaponSystem?.activeWeaponId === 'knife' ? 1 : 0,
+      s: (this.scopeOverlay && this.weaponSystem?.activeWeaponId === 'sniper' && this.scopeOverlay.isScoped()) ? 1 : 0,
+      c: this.isCrouching ? 1 : 0,
+      sp: this.isSprinting ? 1 : 0,
+      t: estimatedServerTime || Date.now()
     };
   }
 

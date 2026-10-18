@@ -417,18 +417,23 @@ export class WeaponSystem {
 
     this.audio.playKnifeSwing();
 
+    const shotId = `knife_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+
     // Raycast in forward camera direction up to 2.2 units reach
     const forward = this.camera.getForwardRay().direction;
     const rayOrigin = this.camera.position.clone();
     const ray = new Ray(rayOrigin, forward, CONFIG.WEAPONS.KNIFE.RANGE);
 
     const hitInfo = this.scene.pickWithRay(ray, mesh => {
-      if (!mesh.isPickable) return false;
+      if (!mesh || !mesh.isPickable) return false;
       if (mesh === this.gunRoot || mesh.isDescendantOf(this.gunRoot)) return false;
+      if (mesh.name === 'playerCollider' || mesh.metadata?.isLocalPlayer) return false;
+      if (mesh.name?.startsWith('tracer_') || mesh.metadata?.isTrigger) return false;
       return mesh.metadata?.isHitbox;
     });
 
     let hitResult = {
+      shotId,
       fired: true,
       weaponType: 'knife',
       damage: CONFIG.WEAPONS.KNIFE.DAMAGE,
@@ -452,6 +457,12 @@ export class WeaponSystem {
       };
 
       this.audio.playKnifeHit();
+      if (this.ui) {
+        this.ui.showHitmarker(hitResult.hitPart === 'head');
+      }
+      if (this.audio && this.audio.playHitmarker) {
+        this.audio.playHitmarker(hitResult.hitPart === 'head');
+      }
     }
 
     return hitResult;
@@ -497,13 +508,17 @@ export class WeaponSystem {
     const ray = new Ray(rayOrigin, shotDirection, 250);
 
     const hitInfo = this.scene.pickWithRay(ray, mesh => {
-      if (!mesh.isPickable) return false;
+      if (!mesh || !mesh.isPickable) return false;
       if (mesh === this.gunRoot || mesh.isDescendantOf(this.gunRoot)) return false;
+      if (mesh.name === 'playerCollider' || mesh.metadata?.isLocalPlayer) return false;
+      if (mesh.name?.startsWith('tracer_') || mesh.metadata?.isTrigger) return false;
       return mesh.metadata?.isHitbox || mesh.checkCollisions;
     });
 
+    const shotId = `shot_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     let endPoint = rayOrigin.add(shotDirection.scale(140));
     let hitResult = {
+      shotId,
       fired: true,
       weaponType: 'sniper',
       bodyDamage: this.config.BODY_DAMAGE,
@@ -529,6 +544,14 @@ export class WeaponSystem {
         hitResult.hitPart = pickedMesh.metadata.hitPart;
         hitResult.targetId = pickedMesh.metadata.targetId;
         hitResult.targetType = pickedMesh.metadata.targetType;
+
+        // Immediate client hit feedback (prediction)
+        if (this.ui) {
+          this.ui.showHitmarker(hitResult.hitPart === 'head');
+        }
+        if (this.audio && this.audio.playHitmarker) {
+          this.audio.playHitmarker(hitResult.hitPart === 'head');
+        }
       } else {
         this.triggerImpactSparks(endPoint, hitInfo.getNormal(true) || Vector3.Up());
       }

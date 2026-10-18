@@ -1,5 +1,6 @@
 // Synchronized Dual-Perspective Bullet Cam Kill Replay System
-// Supports Shooter Bullet-Follow, Victim Cinematic Angle, Melee Kills & Fail-Safe Cleanup
+// Features: Idempotent State Machine (IDLE, PREPARING, PLAYING, ENDING), Event Queueing,
+// KillId Deduplication, Real-time performance.now() Driver, 5s Watchdog, Prewarm Shaders & Fail-Safe Cleanup
 import {
   UniversalCamera,
   MeshBuilder,
@@ -11,6 +12,13 @@ import {
 import { CONFIG } from './config.js';
 import { timeManager } from './timeManager.js';
 
+export const BULLET_CAM_STATE = {
+  IDLE: 'IDLE',
+  PREPARING: 'PREPARING',
+  PLAYING: 'PLAYING',
+  ENDING: 'ENDING'
+};
+
 export class BulletCam {
   constructor(scene, playerCamera, xrayEffect, bloodEffect, audioManager, uiManager) {
     this.scene = scene;
@@ -20,8 +28,8 @@ export class BulletCam {
     this.audio = audioManager;
     this.ui = uiManager;
 
-    this.isActive = false;
     this.enabled = true;
+    this.camState = BULLET_CAM_STATE.IDLE;
 
     // Dedicated Cinematic Camera
     this.bulletCamera = new UniversalCamera(
@@ -54,13 +62,23 @@ export class BulletCam {
     this.killInfo = null;
     this.onCompleteCallback = null;
 
-    // Cinematic State Machine
-    this.state = 'INACTIVE'; // 'FLYING' | 'APPROACH' | 'IMPACT' | 'RAGDOLL' | 'FINISHING'
-    this.stateTimer = 0;
+    // Real-time timing (unaffected by game time dilation)
+    this.stateStartTime = 0;
+    this.playingSubPhase = 'FLIGHT'; // 'FLIGHT' | 'APPROACH' | 'IMPACT' | 'RAGDOLL' (or 'MELEE_ORBIT')
+    this.phaseStartTime = 0;
+    this.watchdogTimerId = null;
+
+    // Deduplication & Event Queueing
+    this.processedKillIds = new Set();
+    this.killQueue = [];
 
     this.createPooledBullet();
     this.setupLetterboxUI();
     this.setupInputListener();
+  }
+
+  get isActive() {
+    return this.camState !== BULLET_CAM_STATE.IDLE;
   }
 
   createPooledBullet() {
@@ -151,98 +169,192 @@ export class BulletCam {
   setupInputListener() {
     window.addEventListener('keydown', (e) => {
       if (this.isActive && e.code === 'Space') {
-        // Skip visual replay locally for this player
         this.skipVisual();
       }
     });
   }
 
-  start(perspective, startPos, targetHitPos, victimCharacter, isHeadshot, killInfo, onComplete) {
+  prewarm(scene) {
+    try {
+      if (this.bulletRoot) {
+        this.bulletRoot.setEnabled(true);
+        this.bulletRoot.position.set(0, -200, 0);
+      }
+      if (this.trailMesh) {
+        this.trailMesh.setEnabled(true);
+        this.trailMesh.position.set(0, -200, 0);
+      }
+      const meshes = this.bulletRoot?.getChildMeshes() || [];
+      for (const m of meshes) {
+        if (m.material && typeof m.material.forceCompilationAsync === 'function') {
+          m.material.forceCompilationAsync(m).catch(() => {});
+        }
+      }
+      setTimeout(() => {
+        if (this.camState === BULLET_CAM_STATE.IDLE) {
+          this.bulletRoot?.setEnabled(false);
+          this.trailMesh?.setEnabled(false);
+        }
+      }, 150);
+    } catch (e) {
+      console.warn('[BulletCam] Prewarm notice:', e);
+    }
+  }
+
+  start(perspective, startPos, targetHitPos, victimCharacter, isHeadshot, killInfo = {}, onComplete = null) {
+    // 1. Deduplication
+    const killId = killInfo?.killId;
+    if (killId) {
+      if (this.processedKillIds.has(killId)) {
+        return;
+      }
+      this.processedKillIds.add(killId);
+      if (this.processedKillIds.size > 60) {
+        const first = this.processedKillIds.values().next().value;
+        this.processedKillIds.delete(first);
+      }
+    }
+
     if (!this.enabled) {
       if (onComplete) onComplete(killInfo);
       return;
     }
 
-    this.isActive = true;
-    this.perspective = perspective || 'shooter';
-    this.weaponType = killInfo?.weaponType || 'sniper';
-    this.startPoint.copyFrom(startPos);
-    this.hitPoint.copyFrom(targetHitPos);
-    this.victim = victimCharacter;
-    this.isHeadshot = isHeadshot;
-    this.killInfo = killInfo;
-    this.onCompleteCallback = onComplete;
-
-    this.direction = this.hitPoint.subtract(this.startPoint).normalize();
-    this.totalDistance = Math.max(0.5, Vector3.Distance(this.startPoint, this.hitPoint));
-    this.traveledDistance = 0;
-    this.bulletPos.copyFrom(this.startPoint);
-
-    // Update Banner & Text
-    if (this.bannerText) {
-      this.bannerText.textContent = this.perspective === 'victim'
-        ? 'OPPONENT ELIMINATION REPLAY'
-        : 'CINEMATIC KILL CAM';
+    // 2. Queueing if already busy
+    if (this.camState !== BULLET_CAM_STATE.IDLE) {
+      this.killQueue.push({
+        perspective,
+        startPos: startPos.clone ? startPos.clone() : new Vector3(startPos.x, startPos.y, startPos.z),
+        targetHitPos: targetHitPos.clone ? targetHitPos.clone() : new Vector3(targetHitPos.x, targetHitPos.y, targetHitPos.z),
+        victimCharacter,
+        isHeadshot,
+        killInfo,
+        onComplete,
+        enqueuedAt: performance.now()
+      });
+      return;
     }
 
-    const distMeters = Math.max(1, Math.round(this.totalDistance));
-    if (this.distTag) {
-      this.distTag.textContent = this.weaponType === 'knife' ? 'MELEE STRIKE' : `${distMeters} METERS`;
-    }
+    this.executeKillCam(perspective, startPos, targetHitPos, victimCharacter, isHeadshot, killInfo, onComplete);
+  }
 
-    if (this.targetLabel) {
+  executeKillCam(perspective, startPos, targetHitPos, victimCharacter, isHeadshot, killInfo, onComplete) {
+    try {
+      this.camState = BULLET_CAM_STATE.PREPARING;
+      this.stateStartTime = performance.now();
+
+      // Clear any prior watchdog and arm 5-second watchdog
+      this.clearWatchdog();
+      this.watchdogTimerId = setTimeout(() => {
+        console.warn('[BulletCam] Watchdog timer fired after 5.0s, forcing cleanup');
+        this.complete();
+      }, 5000);
+
+      this.perspective = perspective || 'shooter';
+      this.weaponType = killInfo?.weaponType || 'sniper';
+
+      // Fallback coordinate sanitization
+      const sx = startPos?.x ?? 0;
+      const sy = startPos?.y ?? 1.5;
+      const sz = startPos?.z ?? 0;
+      this.startPoint.set(sx, sy, sz);
+
+      const tx = targetHitPos?.x ?? 0;
+      const ty = targetHitPos?.y ?? 1.4;
+      const tz = targetHitPos?.z ?? 0;
+      this.hitPoint.set(tx, ty, tz);
+
+      this.victim = victimCharacter;
+      this.isHeadshot = !!isHeadshot;
+      this.killInfo = killInfo;
+      this.onCompleteCallback = onComplete;
+
+      this.direction = this.hitPoint.subtract(this.startPoint).normalize();
+      if (this.direction.lengthSquared() < 0.001) {
+        this.direction.set(0, 0, 1);
+      }
+      this.totalDistance = Math.max(0.5, Vector3.Distance(this.startPoint, this.hitPoint));
+      this.traveledDistance = 0;
+      this.bulletPos.copyFrom(this.startPoint);
+
+      // Late arrival trimming: check age of packet
+      const packetAgeMs = killInfo?.timestamp ? (Date.now() - killInfo.timestamp) : 0;
+      this.lateTrimFactor = 1.0;
+      if (packetAgeMs > 400) {
+        // High ping: accelerate flight phase so replay finishes crisp without lagging behind
+        this.lateTrimFactor = Math.min(3.0, 1.0 + (packetAgeMs - 400) / 300);
+      }
+
+      // Update banner text
+      if (this.bannerText) {
+        this.bannerText.textContent = this.perspective === 'victim'
+          ? 'OPPONENT ELIMINATION REPLAY'
+          : 'CINEMATIC KILL CAM';
+      }
+
+      const distMeters = Math.max(1, Math.round(this.totalDistance));
+      if (this.distTag) {
+        this.distTag.textContent = this.weaponType === 'knife' ? 'MELEE STRIKE' : `${distMeters} METERS`;
+      }
+
+      if (this.targetLabel) {
+        if (this.weaponType === 'knife') {
+          this.targetLabel.textContent = this.perspective === 'victim'
+            ? '☠ ELIMINATED BY TACTICAL COMBAT KNIFE'
+            : '⚔ LETHAL COMBAT KNIFE STRIKE';
+        } else {
+          this.targetLabel.textContent = this.isHeadshot
+            ? '🎯 CRITICAL HEADSHOT ELIMINATION'
+            : '☠ ONE-SHOT SNIPER ELIMINATION';
+        }
+      }
+
+      // 1. Slow Motion: scale game time to 0.1x
+      timeManager.setTimeScale(CONFIG.BULLET_CAM.SLOW_MO_SCALE, true);
+
+      // 2. Switch to Dedicated Bullet Camera
+      this.scene.activeCamera = this.bulletCamera;
+
+      // 3. UI and Letterbox
+      if (this.letterboxContainer) this.letterboxContainer.classList.remove('hidden');
+      if (this.ui) {
+        this.ui.setBulletCamActive(true);
+        this.ui.setAds(true);
+        this.ui.setSniperScope(false);
+      }
+
+      // 4. Sound cues
+      if (this.audio) {
+        const t = this.audio.ctx?.currentTime || 0;
+        this.audio.playTone(85, 'sine', 1.8, t, 0.4);
+        this.audio.playTone(320, 'triangle', 0.8, t + 0.1, 0.25);
+      }
+
+      // 5. Transition to PLAYING
+      this.camState = BULLET_CAM_STATE.PLAYING;
+      this.phaseStartTime = performance.now();
+
       if (this.weaponType === 'knife') {
-        this.targetLabel.textContent = this.perspective === 'victim'
-          ? '☠ ELIMINATED BY TACTICAL COMBAT KNIFE'
-          : '⚔ LETHAL COMBAT KNIFE STRIKE';
+        this.playingSubPhase = 'MELEE_ORBIT';
+        this.setupMeleeKillCamera();
+        this.triggerImpact();
       } else {
-        this.targetLabel.textContent = isHeadshot
-          ? '🎯 CRITICAL HEADSHOT ELIMINATION'
-          : '☠ ONE-SHOT SNIPER ELIMINATION';
+        if (this.perspective === 'victim') {
+          this.setupVictimCamera();
+        } else {
+          this.setupShooterCamera();
+        }
+
+        this.bulletRoot.setEnabled(true);
+        this.bulletRoot.position.copyFrom(this.startPoint);
+        this.bulletRoot.lookAt(this.startPoint.add(this.direction));
+        this.trailMesh.setEnabled(true);
+
+        this.playingSubPhase = 'FLIGHT';
       }
-    }
-
-    // 1. Slow Motion: scale game time to 0.1x
-    timeManager.setTimeScale(CONFIG.BULLET_CAM.SLOW_MO_SCALE, true);
-
-    // 2. Switch to Dedicated Bullet Camera
-    this.scene.activeCamera = this.bulletCamera;
-
-    if (this.weaponType === 'knife') {
-      // Melee kill: start immediately at close-up cinematic angle
-      this.state = 'IMPACT';
-      this.setupMeleeKillCamera();
-      this.triggerImpact();
-    } else {
-      // Sniper kill: bullet trajectory replay
-      if (this.perspective === 'victim') {
-        this.setupVictimCamera();
-      } else {
-        this.setupShooterCamera();
-      }
-
-      this.bulletRoot.setEnabled(true);
-      this.bulletRoot.position.copyFrom(this.startPoint);
-      this.bulletRoot.lookAt(this.startPoint.add(this.direction));
-      this.trailMesh.setEnabled(true);
-
-      this.state = 'FLYING';
-      this.stateTimer = 0;
-    }
-
-    // 3. Cinematic Letterbox & HUD suppression
-    if (this.letterboxContainer) this.letterboxContainer.classList.remove('hidden');
-    if (this.ui) {
-      this.ui.setBulletCamActive(true);
-      this.ui.setAds(true);
-      this.ui.setSniperScope(false);
-    }
-
-    // 4. Sound effect
-    if (this.audio) {
-      const t = this.audio.ctx?.currentTime || 0;
-      this.audio.playTone(85, 'sine', 1.8, t, 0.4);
-      this.audio.playTone(320, 'triangle', 0.8, t + 0.1, 0.25);
+    } catch (err) {
+      console.error('[BulletCam] Error during start:', err);
+      this.complete();
     }
   }
 
@@ -254,7 +366,6 @@ export class BulletCam {
   }
 
   setupVictimCamera() {
-    // Cinematic third-person angle facing victim with incoming bullet view
     const sideVec = Vector3.Cross(this.direction, Vector3.Up()).normalize();
     const camPos = this.hitPoint
       .add(sideVec.scale(2.4))
@@ -277,40 +388,50 @@ export class BulletCam {
   }
 
   update(rawDtSec) {
-    if (!this.isActive) {
+    if (this.camState === BULLET_CAM_STATE.IDLE) {
       if (this.shakeTimer > 0) this.shakeTimer -= rawDtSec;
       return;
     }
 
-    switch (this.state) {
-      case 'FLYING':
-        this.updateFlying(rawDtSec);
-        break;
-      case 'APPROACH':
-        this.updateApproach(rawDtSec);
-        break;
-      case 'IMPACT':
-        this.updateImpact(rawDtSec);
-        break;
-      case 'RAGDOLL':
-        this.updateRagdoll(rawDtSec);
-        break;
-      case 'FINISHING':
-        this.updateFinishing(rawDtSec);
-        break;
-    }
+    const now = performance.now();
+    const elapsedPhaseSec = (now - this.phaseStartTime) / 1000;
 
-    // Screen Shake
-    if (this.shakeTimer > 0) {
-      this.shakeTimer -= rawDtSec;
-      const shakeAmt = this.shakeIntensity * (this.shakeTimer / 0.25);
-      this.bulletCamera.position.x += (Math.random() - 0.5) * shakeAmt;
-      this.bulletCamera.position.y += (Math.random() - 0.5) * shakeAmt;
+    try {
+      if (this.camState === BULLET_CAM_STATE.PLAYING) {
+        switch (this.playingSubPhase) {
+          case 'FLIGHT':
+            this.updateFlight(rawDtSec, elapsedPhaseSec);
+            break;
+          case 'APPROACH':
+            this.updateApproach(rawDtSec, elapsedPhaseSec);
+            break;
+          case 'IMPACT':
+            this.updateImpact(elapsedPhaseSec);
+            break;
+          case 'RAGDOLL':
+            this.updateRagdoll(elapsedPhaseSec);
+            break;
+          case 'MELEE_ORBIT':
+            this.updateMeleeOrbit(elapsedPhaseSec);
+            break;
+        }
+      }
+
+      // Screen Shake
+      if (this.shakeTimer > 0) {
+        this.shakeTimer -= rawDtSec;
+        const shakeAmt = this.shakeIntensity * (this.shakeTimer / 0.25);
+        this.bulletCamera.position.x += (Math.random() - 0.5) * shakeAmt;
+        this.bulletCamera.position.y += (Math.random() - 0.5) * shakeAmt;
+      }
+    } catch (err) {
+      console.error('[BulletCam] Exception in update loop:', err);
+      this.complete();
     }
   }
 
-  updateFlying(rawDtSec) {
-    const speed = CONFIG.BULLET_CAM.BULLET_SPEED;
+  updateFlight(rawDtSec, elapsedSec) {
+    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * (this.lateTrimFactor || 1.0);
     this.traveledDistance += speed * rawDtSec;
     const progress = Math.min(1.0, this.traveledDistance / this.totalDistance);
 
@@ -338,27 +459,26 @@ export class BulletCam {
       this.bulletCamera.setTarget(this.bulletPos.add(this.direction.scale(4.0)));
       this.bulletCamera.rotation.z = Math.sin(progress * Math.PI) * 0.12;
     } else {
-      // Victim perspective: camera looks along path of incoming bullet
       this.bulletCamera.setTarget(this.bulletPos);
     }
 
     const remainingDist = this.totalDistance - this.traveledDistance;
 
-    // Trigger X-Ray 0.3s before impact
-    if (remainingDist <= speed * CONFIG.BULLET_CAM.XRAY_LEAD_TIME && !this.xray.isActive) {
-      if (this.victim) {
+    // Trigger X-Ray
+    if (remainingDist <= speed * CONFIG.BULLET_CAM.XRAY_LEAD_TIME && !this.xray?.isActive) {
+      if (this.victim && typeof this.xray?.enable === 'function') {
         this.xray.enable(this.victim);
       }
     }
 
-    if (remainingDist <= CONFIG.BULLET_CAM.APPROACH_DISTANCE) {
-      this.state = 'APPROACH';
-      this.stateTimer = 0;
+    if (remainingDist <= CONFIG.BULLET_CAM.APPROACH_DISTANCE || progress >= 0.85) {
+      this.playingSubPhase = 'APPROACH';
+      this.phaseStartTime = performance.now();
     }
   }
 
-  updateApproach(rawDtSec) {
-    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.7;
+  updateApproach(rawDtSec, elapsedSec) {
+    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.7 * (this.lateTrimFactor || 1.0);
     this.traveledDistance += speed * rawDtSec;
     const progress = Math.min(1.0, this.traveledDistance / this.totalDistance);
 
@@ -374,14 +494,14 @@ export class BulletCam {
     this.bulletCamera.position = Vector3.Lerp(this.bulletCamera.position, orbitTargetPos, 12 * rawDtSec);
     this.bulletCamera.setTarget(this.hitPoint);
 
-    if (progress >= 1.0) {
+    if (progress >= 1.0 || elapsedSec > 1.2) {
       this.triggerImpact();
     }
   }
 
   triggerImpact() {
-    this.state = 'IMPACT';
-    this.stateTimer = 0;
+    this.playingSubPhase = 'IMPACT';
+    this.phaseStartTime = performance.now();
 
     timeManager.setHitStop(CONFIG.BULLET_CAM.HIT_STOP_DURATION * 1000);
 
@@ -398,42 +518,57 @@ export class BulletCam {
     this.bulletRoot.setEnabled(false);
     this.trailMesh.setEnabled(false);
 
-    this.blood.spawnBloodBurst(this.hitPoint, this.direction);
+    if (this.blood && typeof this.blood.spawnBloodBurst === 'function') {
+      this.blood.spawnBloodBurst(this.hitPoint, this.direction);
+    }
 
     if (this.victim && typeof this.victim.triggerRagdoll === 'function') {
       this.victim.triggerRagdoll(this.hitPoint, this.direction, this.isHeadshot);
     }
   }
 
-  updateImpact(rawDtSec) {
-    this.stateTimer += rawDtSec;
-    if (this.stateTimer >= CONFIG.BULLET_CAM.HIT_STOP_DURATION) {
-      this.xray.disable();
-      this.state = 'RAGDOLL';
-      this.stateTimer = 0;
+  updateImpact(elapsedSec) {
+    if (elapsedSec >= CONFIG.BULLET_CAM.HIT_STOP_DURATION) {
+      if (this.xray) this.xray.disable();
+      this.playingSubPhase = 'RAGDOLL';
+      this.phaseStartTime = performance.now();
     }
   }
 
-  updateRagdoll(rawDtSec) {
-    this.stateTimer += rawDtSec;
-
-    const orbitAngle = this.stateTimer * 0.8;
+  updateRagdoll(elapsedSec) {
+    const orbitAngle = elapsedSec * 0.8;
     const radius = 2.6;
     const camX = this.hitPoint.x + Math.sin(orbitAngle) * radius;
     const camZ = this.hitPoint.z + Math.cos(orbitAngle) * radius;
-    const camY = Math.max(0.6, this.hitPoint.y - this.stateTimer * 0.25);
+    const camY = Math.max(0.6, this.hitPoint.y - elapsedSec * 0.25);
 
     this.bulletCamera.position.set(camX, camY, camZ);
-    this.bulletCamera.setTarget(this.hitPoint.add(new Vector3(0, -this.stateTimer * 0.3, 0)));
+    this.bulletCamera.setTarget(this.hitPoint.add(new Vector3(0, -elapsedSec * 0.3, 0)));
 
-    if (this.stateTimer >= CONFIG.BULLET_CAM.RAGDOLL_DURATION) {
-      this.startFinishing();
+    if (elapsedSec >= CONFIG.BULLET_CAM.RAGDOLL_DURATION) {
+      this.startEnding();
     }
   }
 
-  startFinishing() {
-    this.state = 'FINISHING';
-    this.stateTimer = 0;
+  updateMeleeOrbit(elapsedSec) {
+    // Melee slow-mo cinematic: 1.5s orbit around strike point
+    const orbitAngle = elapsedSec * 1.4;
+    const radius = 2.2;
+    const camX = this.hitPoint.x + Math.sin(orbitAngle) * radius;
+    const camZ = this.hitPoint.z + Math.cos(orbitAngle) * radius;
+    const camY = Math.max(0.8, this.hitPoint.y + 0.3 - elapsedSec * 0.15);
+
+    this.bulletCamera.position.set(camX, camY, camZ);
+    this.bulletCamera.setTarget(this.hitPoint);
+
+    if (elapsedSec >= 1.5) {
+      this.startEnding();
+    }
+  }
+
+  startEnding() {
+    this.camState = BULLET_CAM_STATE.ENDING;
+    this.phaseStartTime = performance.now();
 
     timeManager.setTimeScale(1.0);
 
@@ -449,44 +584,81 @@ export class BulletCam {
 
     setTimeout(() => {
       this.complete();
-    }, CONFIG.BULLET_CAM.EASE_BACK_DURATION * 1000);
+    }, (CONFIG.BULLET_CAM.EASE_BACK_DURATION || 0.3) * 1000);
   }
 
-  updateFinishing(rawDtSec) {}
-
   skipVisual() {
-    if (!this.isActive) return;
-    // Visually restore local player camera immediately while keeping input lock
+    if (this.camState === BULLET_CAM_STATE.IDLE) return;
     if (this.letterboxContainer) this.letterboxContainer.classList.add('hidden');
     if (this.whiteFlash) this.whiteFlash.classList.add('hidden');
     this.scene.activeCamera = this.playerCamera;
-    this.xray.disable();
+    if (this.xray) this.xray.disable();
     timeManager.reset();
   }
 
-  // Guaranteed fail-safe cleanup in try/finally
+  clearWatchdog() {
+    if (this.watchdogTimerId) {
+      clearTimeout(this.watchdogTimerId);
+      this.watchdogTimerId = null;
+    }
+  }
+
+  // Idempotent and fail-safe completion routine
   complete() {
+    this.clearWatchdog();
+
     try {
-      this.isActive = false;
-      this.state = 'INACTIVE';
-      this.bulletRoot.setEnabled(false);
-      this.trailMesh.setEnabled(false);
+      this.camState = BULLET_CAM_STATE.IDLE;
+      if (this.bulletRoot) this.bulletRoot.setEnabled(false);
+      if (this.trailMesh) this.trailMesh.setEnabled(false);
       if (this.letterboxContainer) this.letterboxContainer.classList.add('hidden');
       if (this.whiteFlash) this.whiteFlash.classList.add('hidden');
-      this.xray.disable();
+      if (this.xray) this.xray.disable();
       timeManager.reset();
       this.scene.activeCamera = this.playerCamera;
       if (this.ui) {
         this.ui.setBulletCamActive(false);
         this.ui.setAds(false);
       }
+    } catch (err) {
+      console.warn('[BulletCam] Cleanup warning:', err);
     } finally {
       if (this.onCompleteCallback) {
         const cb = this.onCompleteCallback;
         this.onCompleteCallback = null;
-        cb(this.killInfo);
+        try {
+          cb(this.killInfo);
+        } catch (e) {
+          console.error('[BulletCam] onCompleteCallback error:', e);
+        }
       }
+
+      // Check queued kills
+      this.processQueue();
     }
+  }
+
+  processQueue() {
+    if (this.killQueue.length === 0) return;
+
+    const nextJob = this.killQueue.shift();
+    const now = performance.now();
+    // Drop jobs queued longer than 5 seconds (stale)
+    if (now - nextJob.enqueuedAt > 5000) {
+      if (nextJob.onComplete) nextJob.onComplete(nextJob.killInfo);
+      this.processQueue();
+      return;
+    }
+
+    this.executeKillCam(
+      nextJob.perspective,
+      nextJob.startPos,
+      nextJob.targetHitPos,
+      nextJob.victimCharacter,
+      nextJob.isHeadshot,
+      nextJob.killInfo,
+      nextJob.onComplete
+    );
   }
 
   setEnabled(val) {

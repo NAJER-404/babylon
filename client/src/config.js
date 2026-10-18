@@ -53,14 +53,18 @@ export const CONFIG = {
         CROUCH_SPEED: 2.5,
         SCOPED_SPEED: 1.5,           // ~30% walk speed while scoped
         JUMP_VELOCITY: 5.2,          // Standard jump
+        ACCELERATION: 32.0,
+        DECELERATION: 30.0,
         AIR_CONTROL: 0.25
       },
       knife: {
-        WALK_SPEED: 6.0,             // Fast movement
-        SPRINT_SPEED: 10.0,          // High mobility runner
-        CROUCH_SPEED: 3.5,
-        SCOPED_SPEED: 6.0,
-        JUMP_VELOCITY: 6.8,          // 1.6x jump height / agility boost
+        WALK_SPEED: 7.0,             // Fast agile walk (Part 4)
+        SPRINT_SPEED: 12.5,          // High mobility sprint (Part 4)
+        CROUCH_SPEED: 4.0,           // Fast crouch traversal (Part 4)
+        SCOPED_SPEED: 7.0,
+        JUMP_VELOCITY: 10.4,         // 2x sniper jump height (Part 4)
+        ACCELERATION: 70.0,          // Snappy ~0.1s acceleration (Part 4)
+        DECELERATION: 45.0,
         AIR_CONTROL: 0.45            // Agile air strafe control
       }
     }
@@ -187,7 +191,10 @@ export const CONFIG = {
       : (typeof import.meta !== 'undefined' && import.meta.env?.DEV
           ? 'http://localhost:3000'
           : window.location.origin),
-    SEND_RATE_HZ: 20,             // Fixed 20 Hz network broadcast
-    INTERPOLATION_OFFSET_MS: 100
+    SEND_RATE_HZ: 30,             // Fixed 30 Hz network send rate (Part 1)
+    INTERPOLATION_OFFSET_MS: 120, // Adaptive 100-150ms interpolation baseline
+    MAX_EXTRAPOLATION_MS: 200,    // Limited 200ms extrapolation
+    MAX_REWIND_MS: 300,           // 300ms max lag compensation rewind
+    PREDICTION_SNAP_THRESHOLD: 2.0 // Accept position unless error > 2 units
   }
 };

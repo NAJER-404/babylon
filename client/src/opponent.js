@@ -44,6 +44,12 @@ export class OpponentCharacter {
     this.positionBuffer = [];
     this.targetPosition = new Vector3(0, 0, 0);
     this.targetRotationY = 0;
+    this.serverClockOffset = 0;
+    this.crouchFactor = 0;
+
+    // Hitbox debug wireframe state
+    this.debugWireframeMat = null;
+    this.hitboxesWireframeVisible = false;
 
     // Ragdoll state
     this.isRagdoll = false;
@@ -657,17 +663,64 @@ export class OpponentCharacter {
     this.updateNameTag();
   }
 
+  setHitboxesWireframe(visible) {
+    this.hitboxesWireframeVisible = !!visible;
+    const hitboxes = [this.headHitbox, this.bodyHitbox, this.legsHitbox];
+    
+    if (visible && !this.debugWireframeMat) {
+      this.debugWireframeMat = new StandardMaterial(`hitboxWireMat_${this.id}`, this.scene);
+      this.debugWireframeMat.wireframe = true;
+      this.debugWireframeMat.emissiveColor = new Color3(0, 1, 0.4);
+      this.debugWireframeMat.disableLighting = true;
+    }
+
+    hitboxes.forEach(m => {
+      if (!m) return;
+      if (visible) {
+        m.material = this.debugWireframeMat;
+        m.isVisible = true;
+      } else {
+        m.isVisible = false;
+      }
+    });
+  }
+
+  setServerClockOffset(offsetMs) {
+    this.serverClockOffset = offsetMs || 0;
+  }
+
   pushNetworkUpdate(update) {
+    // Support compact protocol as well as verbose
+    const posX = update.p ? update.p[0] : (update.position ? update.position.x : this.rootNode.position.x);
+    const posY = update.p ? update.p[1] : (update.position ? update.position.y : this.rootNode.position.y);
+    const posZ = update.p ? update.p[2] : (update.position ? update.position.z : this.rootNode.position.z);
+
+    const rotY = update.r ? update.r[1] : (update.rotation ? update.rotation.y : 0);
+    const pitch = update.r ? update.r[0] : (update.rotation ? update.rotation.x : 0);
+
+    const vx = update.v ? update.v[0] : (update.velocity ? update.velocity.x : 0);
+    const vy = update.v ? update.v[1] : (update.velocity ? update.velocity.y : 0);
+    const vz = update.v ? update.v[2] : (update.velocity ? update.velocity.z : 0);
+
+    const isCrouch = update.c !== undefined ? !!update.c : (update.isCrouching !== undefined ? !!update.isCrouching : false);
+    const isScope = update.s !== undefined ? !!update.s : (update.isScoped !== undefined ? !!update.isScoped : false);
+    const activeWep = update.w !== undefined ? (update.w === 1 ? 'knife' : 'sniper') : update.activeWeapon;
+
+    this.isCrouching = isCrouch;
+
     this.positionBuffer.push({
-      x: update.position.x,
-      y: update.position.y,
-      z: update.position.z,
-      rotY: update.rotation ? update.rotation.y : 0,
-      pitch: update.rotation ? update.rotation.x : 0,
-      timestamp: update.timestamp || Date.now()
+      x: posX,
+      y: posY,
+      z: posZ,
+      vx,
+      vy,
+      vz,
+      rotY,
+      pitch,
+      timestamp: update.t || update.timestamp || Date.now()
     });
 
-    if (this.positionBuffer.length > 20) {
+    if (this.positionBuffer.length > 30) {
       this.positionBuffer.shift();
     }
 
@@ -681,11 +734,11 @@ export class OpponentCharacter {
     if (update.isProtected !== undefined) {
       this.setProtected(update.isProtected);
     }
-    if (update.activeWeapon) {
-      this.setActiveWeapon(update.activeWeapon);
+    if (activeWep) {
+      this.setActiveWeapon(activeWep);
     }
-    if (update.isScoped !== undefined) {
-      this.setScopedState(update.isScoped);
+    if (isScope !== undefined) {
+      this.setScopedState(isScope);
     }
     if (update.name && update.name !== this.name) {
       this.setName(update.name);
@@ -725,6 +778,19 @@ export class OpponentCharacter {
       return;
     }
 
+    // Crouch height and hitbox adaptation
+    const targetCrouchFactor = this.isCrouching ? 1.0 : 0.0;
+    this.crouchFactor = this.crouchFactor !== undefined
+      ? this.crouchFactor + (targetCrouchFactor - this.crouchFactor) * Math.min(1.0, 14 * dt)
+      : targetCrouchFactor;
+
+    if (this.headHitbox) this.headHitbox.position.y = 1.95 - this.crouchFactor * 0.75;
+    if (this.bodyHitbox) this.bodyHitbox.position.y = 1.25 - this.crouchFactor * 0.45;
+    if (this.legsHitbox) this.legsHitbox.position.y = 0.45 - this.crouchFactor * 0.15;
+    if (this.head) this.head.position.y = 1.88 - this.crouchFactor * 0.73;
+    if (this.torso) this.torso.position.y = 1.25 - this.crouchFactor * 0.50;
+    if (this.upperBodyAimPivot) this.upperBodyAimPivot.position.y = 1.45 - this.crouchFactor * 0.50;
+
     // Muzzle flash decay
     if (this.muzzleFlashTimer > 0) {
       this.muzzleFlashTimer -= dt;
@@ -750,35 +816,56 @@ export class OpponentCharacter {
       14 * dt
     );
 
-    // Interpolation from positionBuffer (100ms interpolation delay)
+    // Adaptive Interpolation from positionBuffer with Clock Offset and Extrapolation
     let moveSpeed = currentSpeed;
 
     if (this.positionBuffer.length >= 2) {
-      const renderTimestamp = Date.now() - CONFIG.NETWORK.INTERPOLATION_OFFSET_MS;
-      let p0 = this.positionBuffer[0];
-      let p1 = this.positionBuffer[1];
+      const interpDelay = CONFIG.NETWORK?.INTERPOLATION_OFFSET_MS || 120;
+      const maxExtrap = (CONFIG.NETWORK?.MAX_EXTRAPOLATION_MS || 200) / 1000;
+      const estimatedServerTime = (Date.now() + (this.serverClockOffset || 0));
+      const renderTimestamp = estimatedServerTime - interpDelay;
 
-      for (let i = 0; i < this.positionBuffer.length - 1; i++) {
-        if (
-          this.positionBuffer[i].timestamp <= renderTimestamp &&
-          renderTimestamp <= this.positionBuffer[i + 1].timestamp
-        ) {
-          p0 = this.positionBuffer[i];
-          p1 = this.positionBuffer[i + 1];
-          break;
+      const oldest = this.positionBuffer[0];
+      const newest = this.positionBuffer[this.positionBuffer.length - 1];
+
+      if (renderTimestamp <= oldest.timestamp) {
+        this.targetPosition.set(oldest.x, oldest.y, oldest.z);
+        this.targetRotationY = oldest.rotY;
+        if (oldest.pitch !== undefined) this.aimPitch = oldest.pitch;
+      } else if (renderTimestamp >= newest.timestamp) {
+        const extraSec = Math.min(maxExtrap, (renderTimestamp - newest.timestamp) / 1000);
+        this.targetPosition.set(
+          newest.x + (newest.vx || 0) * extraSec,
+          newest.y + (newest.vy || 0) * extraSec,
+          newest.z + (newest.vz || 0) * extraSec
+        );
+        this.targetRotationY = newest.rotY;
+        if (newest.pitch !== undefined) this.aimPitch = newest.pitch;
+      } else {
+        let p0 = oldest;
+        let p1 = newest;
+        for (let i = 0; i < this.positionBuffer.length - 1; i++) {
+          if (
+            this.positionBuffer[i].timestamp <= renderTimestamp &&
+            renderTimestamp <= this.positionBuffer[i + 1].timestamp
+          ) {
+            p0 = this.positionBuffer[i];
+            p1 = this.positionBuffer[i + 1];
+            break;
+          }
         }
-      }
 
-      const totalSpan = p1.timestamp - p0.timestamp;
-      let alpha = totalSpan > 0 ? (renderTimestamp - p0.timestamp) / totalSpan : 1.0;
-      alpha = Math.max(0, Math.min(1.5, alpha));
+        const totalSpan = p1.timestamp - p0.timestamp;
+        let alpha = totalSpan > 0 ? (renderTimestamp - p0.timestamp) / totalSpan : 1.0;
+        alpha = Math.max(0, Math.min(1.0, alpha));
 
-      this.targetPosition.x = p0.x + (p1.x - p0.x) * alpha;
-      this.targetPosition.y = p0.y + (p1.y - p0.y) * alpha;
-      this.targetPosition.z = p0.z + (p1.z - p0.z) * alpha;
-      this.targetRotationY = this.lerpAngle(p0.rotY, p1.rotY, alpha);
-      if (p1.pitch !== undefined) {
-        this.aimPitch = p0.pitch + (p1.pitch - p0.pitch) * alpha;
+        this.targetPosition.x = p0.x + (p1.x - p0.x) * alpha;
+        this.targetPosition.y = p0.y + (p1.y - p0.y) * alpha;
+        this.targetPosition.z = p0.z + (p1.z - p0.z) * alpha;
+        this.targetRotationY = this.lerpAngle(p0.rotY, p1.rotY, alpha);
+        if (p1.pitch !== undefined && p0.pitch !== undefined) {
+          this.aimPitch = p0.pitch + (p1.pitch - p0.pitch) * alpha;
+        }
       }
 
       const dx = this.targetPosition.x - this.rootNode.position.x;
@@ -803,7 +890,7 @@ export class OpponentCharacter {
       this.leftLegPivot.rotation.x = legAngle;
       this.rightLegPivot.rotation.x = -legAngle;
 
-      this.torso.position.y = 1.25 + Math.abs(Math.sin(this.walkAnimTimer)) * 0.05;
+      this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + Math.abs(Math.sin(this.walkAnimTimer)) * 0.05;
       this.torso.rotation.x = 0.12;
 
       const armSway = Math.sin(this.walkAnimTimer) * 0.10;
@@ -823,7 +910,7 @@ export class OpponentCharacter {
       this.leftLegPivot.rotation.x = this.lerpAngle(this.leftLegPivot.rotation.x, 0, 12 * dt);
       this.rightLegPivot.rotation.x = this.lerpAngle(this.rightLegPivot.rotation.x, 0, 12 * dt);
 
-      this.torso.position.y = 1.25 + breathe;
+      this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + breathe;
       this.torso.rotation.x = 0;
 
       if (isKnife) {

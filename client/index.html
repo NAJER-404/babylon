@@ -33,13 +33,51 @@
   <!-- 3D Babylon.js Canvas -->
   <canvas id="renderCanvas"></canvas>
 
-  <!-- Performance Debug Overlay (Toggle with F3) -->
+  <!-- Performance & Telemetry Debug Overlay (Toggle with F3) -->
   <div id="debug-overlay" class="debug-overlay hidden">
-    <div class="debug-title">PERFORMANCE METRICS [F3]</div>
-    <div class="debug-row"><span>FPS:</span> <span id="debug-fps" class="debug-val">60</span></div>
-    <div class="debug-row"><span>DRAW CALLS:</span> <span id="debug-draw-calls" class="debug-val">0</span></div>
-    <div class="debug-row"><span>ACTIVE MESHES:</span> <span id="debug-active-meshes" class="debug-val">0</span></div>
-    <div class="debug-row"><span>PARTICLES:</span> <span id="debug-particles" class="debug-val">0</span></div>
+    <div class="debug-header">
+      <span class="debug-title">DEBUG & TELEMETRY [F3]</span>
+      <span class="debug-sub">F3 to toggle</span>
+    </div>
+
+    <div class="debug-grid">
+      <div class="debug-row"><span>PING (RTT):</span> <span id="debug-ping" class="debug-val">0ms (max 0ms)</span></div>
+      <div class="debug-row"><span>JITTER:</span> <span id="debug-jitter" class="debug-val">0ms</span></div>
+      <div class="debug-row"><span>FPS:</span> <span id="debug-fps" class="debug-val">60</span></div>
+      <div class="debug-row"><span>SERVER TICK:</span> <span id="debug-server-tick" class="debug-val">30 Hz</span></div>
+      <div class="debug-row"><span>PACKETS (IN/OUT):</span> <span id="debug-packet-rate" class="debug-val">0 / 0 pps</span></div>
+      <div class="debug-row"><span>WEAPON:</span> <span id="debug-weapon" class="debug-val">SNIPER</span></div>
+      <div class="debug-row"><span>SPEED:</span> <span id="debug-speed" class="debug-val">0.00 u/s</span></div>
+      <div class="debug-row"><span>KILL CAM STATE:</span> <span id="debug-killcam-state" class="debug-val">IDLE</span></div>
+      <div class="debug-row"><span>TIME SCALE:</span> <span id="debug-timescale" class="debug-val">1.00x</span></div>
+    </div>
+
+    <div class="debug-section-title">HITBOX VISUALIZATION</div>
+    <div class="debug-btn-row">
+      <button id="btn-toggle-client-hitboxes" class="debug-btn">CLIENT HITBOXES: OFF</button>
+      <button id="btn-toggle-server-hitboxes" class="debug-btn">SERVER HITBOXES: OFF</button>
+    </div>
+
+    <div class="debug-section-title">NETWORK SIMULATION (DEV)</div>
+    <div class="debug-sim-row">
+      <label>LATENCY:</label>
+      <select id="select-debug-latency" class="debug-select">
+        <option value="0">0 ms (Off)</option>
+        <option value="100">100 ms</option>
+        <option value="250">250 ms</option>
+        <option value="500">500 ms</option>
+      </select>
+      <label>LOSS:</label>
+      <select id="select-debug-loss" class="debug-select">
+        <option value="0">0%</option>
+        <option value="0.05">5%</option>
+      </select>
+    </div>
+
+    <div class="debug-section-title">LAST 5 SERVER EVENTS</div>
+    <div id="debug-server-events" class="debug-events-list">
+      <div class="debug-event-item">No events yet</div>
+    </div>
   </div>
 
   <!-- Loading Screen -->
@@ -117,6 +155,12 @@
         <div id="online-conn-status" class="conn-pill disconnected">
           <span class="conn-dot"></span>
           <span class="conn-label">DISCONNECTED</span>
+        </div>
+
+        <!-- Railway Region Latency Notice -->
+        <div class="region-warning-box">
+          <span class="region-icon">🌐</span>
+          <span>Server on Railway (US-West). Physical latency from Asia/EU is ~200-300ms. Fixed-rate 30Hz lag compensation & rewind are active.</span>
         </div>
 
         <div class="input-field-group">

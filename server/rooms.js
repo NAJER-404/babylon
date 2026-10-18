@@ -1,5 +1,6 @@
 // Server-side Room, Player & Combat Lifecycle Manager for Babylon 1v1 Arena FPS
-// Supports Sniper, Combat Knife, Synchronized Dual Kill Cam, and 3-2-1 Match Countdown
+// Supports Lag Compensation (Hitbox Rewind History), Server-Authoritative Hit Registration,
+// Synchronized Dual Kill Cam, Knife Melee Validation & Debug Tools
 
 const SPAWN_POINTS = [
   { x: -62, y: 1.2, z: -62, rotY: Math.PI / 4 },       // Spawn 1: SW Red corner
@@ -13,20 +14,42 @@ const BODY_DAMAGE = 100;
 const HEAD_DAMAGE = 200;
 const LEG_DAMAGE = 80;
 const MELEE_DAMAGE = 100;
-const MELEE_MAX_DISTANCE = 2.5; // 2.2m reach + 0.3m network tolerance
+const MELEE_MAX_DISTANCE = 2.7; // 2.2m reach + 0.5m lag compensation tolerance (Part 2)
 const KILL_CAM_DURATION_MS = 3500; // 3.5s synchronized kill cam replay
-const RESPAWN_DELAY_AFTER_KILLCAM_MS = 1200; // Fast respawn after replay ends
+const RESPAWN_DELAY_AFTER_KILLCAM_MS = 1200;
 const SPAWN_PROTECTION_MS = 2000;
 const ROOM_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_REWIND_MS = 300; // 300ms max lag compensation clamp (Part 2)
+const POSITION_HISTORY_SIZE = 35; // ~1.1s of tick history at 30 Hz (Part 2 & Part 5)
 
 export class RoomManager {
   constructor(io) {
     this.io = io;
     this.rooms = new Map(); // roomCode -> roomData
     this.playerToRoom = new Map(); // socketId -> roomCode
+    this.debugHitboxSubscribers = new Set(); // socketIds subscribed to server hitbox visualization
+    this.processedShots = new Map(); // shotId -> timestamp (duplicate ignore)
 
-    // Periodically clean inactive rooms every 5 minutes
+    // Clean inactive rooms and old shot IDs periodically
     setInterval(() => this.cleanupInactiveRooms(), 5 * 60 * 1000);
+    setInterval(() => this.cleanupProcessedShots(), 10 * 1000);
+  }
+
+  setDebugHitboxesSubscription(socketId, enabled) {
+    if (enabled) {
+      this.debugHitboxSubscribers.add(socketId);
+    } else {
+      this.debugHitboxSubscribers.delete(socketId);
+    }
+  }
+
+  cleanupProcessedShots() {
+    const now = Date.now();
+    for (const [id, time] of this.processedShots.entries()) {
+      if (now - time > 10000) {
+        this.processedShots.delete(id);
+      }
+    }
   }
 
   // Generates 4-letter uppercase code excluding ambiguous chars (no 0/O, no 1/I)
@@ -52,7 +75,6 @@ export class RoomManager {
   }
 
   createRoom(socket, rawName = 'Player 1') {
-    // If player already in a room, leave it first
     this.leaveCurrentRoom(socket.id);
 
     const playerName = this.sanitizeName(rawName, 'Player 1');
@@ -72,8 +94,13 @@ export class RoomManager {
       rotation: { x: 0, y: SPAWN_POINTS[0].rotY },
       activeWeapon: 'sniper',
       isScoped: false,
+      isCrouching: false,
+      isSprinting: false,
       rematchReady: false,
-      lastActiveTime: Date.now()
+      lastActiveTime: Date.now(),
+      lastShotTime: 0,
+      lastMeleeTime: 0,
+      positionHistory: [] // Ring buffer for lag compensation (Part 2)
     };
 
     const room = {
@@ -86,7 +113,8 @@ export class RoomManager {
       startTime: null,
       countdownTimer: null,
       killCamTimer: null,
-      respawnTimers: new Map()
+      respawnTimers: new Map(),
+      lastBroadcastState: new Map() // track last sent state for delta compression
     };
 
     this.rooms.set(roomCode, room);
@@ -138,13 +166,11 @@ export class RoomManager {
       return { error: 'Room is already full or in match' };
     }
 
-    // Leave any prior room
     this.leaveCurrentRoom(socket.id);
 
     let playerName = this.sanitizeName(rawName, 'Player 2');
     const p1 = room.playerList[0];
 
-    // If identical names, disambiguate cleanly
     if (playerName.toLowerCase() === p1.name.toLowerCase()) {
       playerName = `${playerName} (2)`;
     }
@@ -163,8 +189,13 @@ export class RoomManager {
       rotation: { x: 0, y: SPAWN_POINTS[1].rotY },
       activeWeapon: 'sniper',
       isScoped: false,
+      isCrouching: false,
+      isSprinting: false,
       rematchReady: false,
-      lastActiveTime: Date.now()
+      lastActiveTime: Date.now(),
+      lastShotTime: 0,
+      lastMeleeTime: 0,
+      positionHistory: []
     };
 
     room.players.set(socket.id, player);
@@ -173,7 +204,6 @@ export class RoomManager {
     this.playerToRoom.set(socket.id, cleanCode);
     socket.join(cleanCode);
 
-    // Start 3-2-1 Synchronized Countdown Sequence
     this.startMatchCountdown(room);
 
     return {
@@ -200,7 +230,6 @@ export class RoomManager {
       winScore: WIN_SCORE
     };
 
-    // Broadcast count 3 immediately
     this.io.to(room.code).emit('match_countdown', {
       count: 3,
       ...matchInfo
@@ -220,7 +249,6 @@ export class RoomManager {
         room.startTime = Date.now();
         room.lastActivity = Date.now();
 
-        // Release both players simultaneously
         this.io.to(room.code).emit('match_start', {
           ...matchInfo,
           serverTimestamp: Date.now()
@@ -229,6 +257,7 @@ export class RoomManager {
     }, 1000);
   }
 
+  // Update player position with speed validation & anti-rubber-banding (Part 1 & Part 4)
   updatePlayer(socketId, data) {
     const roomCode = this.playerToRoom.get(socketId);
     if (!roomCode) return;
@@ -238,25 +267,69 @@ export class RoomManager {
     const player = room.players.get(socketId);
     if (!player || !player.isAlive) return;
 
-    room.lastActivity = Date.now();
-    player.lastActiveTime = Date.now();
+    const now = Date.now();
+    room.lastActivity = now;
 
-    if (data.position && typeof data.position.x === 'number') {
-      player.position.x = data.position.x;
-      player.position.y = data.position.y;
-      player.position.z = data.position.z;
+    // Unpack compact or standard payload (Part 1)
+    let newX, newY, newZ, newRx, newRy, activeWep, isScoped, isCrouching, isSprinting;
+
+    if (data.x !== undefined) {
+      // Compact payload: { x, y, z, rx, ry, w, s, c, sp, t }
+      newX = Number(data.x);
+      newY = Number(data.y);
+      newZ = Number(data.z);
+      newRx = Number(data.rx || 0);
+      newRy = Number(data.ry || 0);
+      activeWep = data.w === 1 ? 'knife' : 'sniper';
+      isScoped = !!data.s;
+      isCrouching = !!data.c;
+      isSprinting = !!data.sp;
+    } else {
+      // Standard payload
+      newX = data.position?.x ?? player.position.x;
+      newY = data.position?.y ?? player.position.y;
+      newZ = data.position?.z ?? player.position.z;
+      newRx = data.rotation?.x ?? player.rotation.x;
+      newRy = data.rotation?.y ?? player.rotation.y;
+      activeWep = data.activeWeapon || player.activeWeapon;
+      isScoped = !!data.isScoped;
+      isCrouching = !!data.isCrouching;
+      isSprinting = !!data.isSprinting;
     }
-    if (data.rotation && typeof data.rotation.y === 'number') {
-      player.rotation.x = data.rotation.x || 0;
-      player.rotation.y = data.rotation.y;
+
+    // Kinematic speed validation (Part 4)
+    // Knife sprint is 12.5 u/s; Sniper sprint is 7.5 u/s.
+    // Allow +25% tolerance plus 2.5 u/s latency jitter allowance.
+    const baseSprintSpeed = activeWep === 'knife' ? 12.5 : 7.5;
+    const maxAllowedSpeed = baseSprintSpeed * 1.25 + 2.5;
+
+    const dt = Math.max(0.016, (now - player.lastActiveTime) / 1000);
+    const distMoved = Math.hypot(newX - player.position.x, newZ - player.position.z);
+    const maxAllowedDist = maxAllowedSpeed * dt;
+
+    // Only correct (snap back) when error exceeds large threshold (2.0 units)
+    if (distMoved > maxAllowedDist + 2.0 && distMoved > 3.0) {
+      // Large teleport/desync detected: send position correction to client
+      this.io.to(socketId).volatile.emit('position_correction', {
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z
+      });
+      return;
     }
-    if (data.activeWeapon) {
-      player.activeWeapon = data.activeWeapon;
-    }
-    if (data.isScoped !== undefined) {
-      player.isScoped = !!data.isScoped;
-    }
-    player.lastClientTimestamp = data.timestamp;
+
+    // Normal movement: accept client position smoothly (NEVER rubber-band)
+    player.position.x = newX;
+    player.position.y = newY;
+    player.position.z = newZ;
+    player.rotation.x = newRx;
+    player.rotation.y = newRy;
+    player.activeWeapon = activeWep;
+    player.isScoped = isScoped;
+    player.isCrouching = isCrouching;
+    player.isSprinting = isSprinting;
+    player.lastActiveTime = now;
+    player.lastClientTimestamp = data.t || data.timestamp || now;
   }
 
   switchWeapon(socketId, weaponId) {
@@ -276,6 +349,7 @@ export class RoomManager {
     });
   }
 
+  // Server-Authoritative Lag Compensation & Hit Registration (Part 2)
   handleShoot(socketId, shootData) {
     const roomCode = this.playerToRoom.get(socketId);
     if (!roomCode) return;
@@ -284,6 +358,17 @@ export class RoomManager {
 
     const shooter = room.players.get(socketId);
     if (!shooter || !shooter.isAlive) return;
+
+    const now = Date.now();
+    room.lastActivity = now;
+
+    const shotId = shootData.shotId || `shot_${now}_${Math.floor(Math.random() * 10000)}`;
+
+    // 1. Deduplicate shot ID (Part 2)
+    if (this.processedShots.has(shotId)) {
+      return;
+    }
+    this.processedShots.set(shotId, now);
 
     // Find the opponent
     let target = null;
@@ -294,34 +379,72 @@ export class RoomManager {
       }
     }
 
-    if (!target || !target.isAlive) return;
+    const weaponType = shootData.weaponType || shooter.activeWeapon || 'sniper';
 
-    const now = Date.now();
-    room.lastActivity = now;
+    // 2. Validate Weapon Fire Rate Limit (Part 2)
+    if (weaponType === 'sniper') {
+      if (now - shooter.lastShotTime < 1350) {
+        this.logShot(shooter, shotId, 0, 0, false, null, 'rate limit');
+        return;
+      }
+      shooter.lastShotTime = now;
+    } else {
+      if (now - shooter.lastMeleeTime < 550) {
+        this.logShot(shooter, shotId, 0, 0, false, null, 'rate limit');
+        return;
+      }
+      shooter.lastMeleeTime = now;
+    }
 
-    // Check target spawn protection
+    // 3. Target Alive Check
+    if (!target || !target.isAlive) {
+      this.logShot(shooter, shotId, 0, 0, false, null, 'target dead');
+      return;
+    }
+
+    // 4. Target Spawn Protection Check
     if (target.isProtected && now < target.protectedUntil) {
+      this.logShot(shooter, shotId, 0, 0, false, null, 'spawn protected');
       return;
     } else if (target.isProtected && now >= target.protectedUntil) {
       target.isProtected = false;
     }
 
-    const weaponType = shootData.weaponType || shooter.activeWeapon || 'sniper';
+    // 5. Origin Sanity Check (shooter origin within 3.5 units of known server position)
+    const origin = shootData.origin || shooter.position;
+    const originErr = Math.hypot(origin.x - shooter.position.x, origin.z - shooter.position.z);
+    if (originErr > 3.5) {
+      this.logShot(shooter, shotId, 0, originErr, false, null, 'invalid shot');
+      return;
+    }
 
-    // 1. MELEE KNIFE ATTACK
+    // 6. LAG COMPENSATION REWIND (Part 2)
+    // Rewind target to the time the shooter actually saw:
+    // shotTime = clientEstimatedServerTime minus remote interpolation delay (~120ms)
+    const clientEst = Number(shootData.estimatedServerTime || shootData.timestamp || (now - 120));
+    const targetShotTime = Math.max(now - MAX_REWIND_MS, Math.min(now, clientEst - 100));
+    const rewindMs = Math.max(0, now - targetShotTime);
+
+    // Sample rewound position and crouch state from target's positionHistory ring buffer
+    const rewound = this.samplePlayerHistory(target, targetShotTime);
+    const targetPos = rewound.position;
+    const isCrouching = rewound.isCrouching;
+
+    // 7. HIT DETECTION
     if (weaponType === 'knife') {
       const dist = Math.hypot(
-        shooter.position.x - target.position.x,
-        shooter.position.y - target.position.y,
-        shooter.position.z - target.position.z
+        shooter.position.x - targetPos.x,
+        shooter.position.y - targetPos.y,
+        shooter.position.z - targetPos.z
       );
 
       if (dist <= MELEE_MAX_DISTANCE) {
-        // Lethal knife hit
+        // Lethal knife hit confirmed
+        this.logShot(shooter, shotId, rewindMs, dist, true, 'body', '');
         const hitPoint = {
-          x: target.position.x,
-          y: target.position.y + 1.2,
-          z: target.position.z
+          x: targetPos.x,
+          y: targetPos.y + 1.2,
+          z: targetPos.z
         };
 
         this.applyDamageAndCheckKill(
@@ -332,17 +455,25 @@ export class RoomManager {
           'body',
           hitPoint,
           'knife',
-          shootData
+          shootData,
+          rewound
         );
+      } else {
+        this.logShot(shooter, shotId, rewindMs, dist, false, null, 'out of range');
       }
       return;
     }
 
-    // 2. SNIPER HITSCAN RAYCAST
-    const { origin, direction } = shootData;
-    if (!origin || !direction) return;
+    // SNIPER HITSCAN RAYCAST
+    const direction = shootData.direction;
+    if (!direction) {
+      this.logShot(shooter, shotId, rewindMs, 0, false, null, 'invalid shot');
+      return;
+    }
 
-    const hitResult = this.checkHit(origin, direction, target.position);
+    const hitResult = this.checkHit(origin, direction, targetPos, isCrouching);
+    const distToTarget = Math.hypot(origin.x - targetPos.x, origin.z - targetPos.z);
+
     if (hitResult.hit) {
       let damage = BODY_DAMAGE;
       if (hitResult.part === 'head') {
@@ -350,6 +481,8 @@ export class RoomManager {
       } else if (hitResult.part === 'legs') {
         damage = LEG_DAMAGE;
       }
+
+      this.logShot(shooter, shotId, rewindMs, distToTarget, true, hitResult.part, '');
 
       this.applyDamageAndCheckKill(
         room,
@@ -359,12 +492,79 @@ export class RoomManager {
         hitResult.part,
         hitResult.point,
         'sniper',
-        shootData
+        shootData,
+        rewound
       );
+    } else {
+      this.logShot(shooter, shotId, rewindMs, distToTarget, false, null, 'no line');
     }
   }
 
-  applyDamageAndCheckKill(room, shooter, target, damage, hitPart, hitPoint, weaponType, shootData) {
+  // Server shot diagnostic logging (Part 0)
+  logShot(shooter, shotId, rewindMs, dist, hit, part, reason = '') {
+    const shooterShort = (shooter.socketId || 'unknown').slice(0, 8);
+    const resultStr = hit ? `HIT [${part}]` : `MISS ["${reason}"]`;
+    console.log(`[SHOT LOG] shooter: ${shooterShort}, shotId: ${shotId}, rewind: ${Math.round(rewindMs)}ms, dist: ${dist.toFixed(1)}m, result: ${resultStr}`);
+  }
+
+  // Sample target position & crouch state from history buffer
+  samplePlayerHistory(player, targetTime) {
+    const hist = player.positionHistory;
+    if (!hist || hist.length === 0) {
+      return {
+        position: { ...player.position },
+        rotation: { ...player.rotation },
+        isCrouching: !!player.isCrouching
+      };
+    }
+
+    if (targetTime <= hist[0].timestamp) {
+      return {
+        position: { ...hist[0].position },
+        rotation: { ...hist[0].rotation },
+        isCrouching: hist[0].isCrouching
+      };
+    }
+
+    const latest = hist[hist.length - 1];
+    if (targetTime >= latest.timestamp) {
+      return {
+        position: { ...player.position },
+        rotation: { ...player.rotation },
+        isCrouching: !!player.isCrouching
+      };
+    }
+
+    // Find bounding snapshots
+    for (let i = 0; i < hist.length - 1; i++) {
+      const s0 = hist[i];
+      const s1 = hist[i + 1];
+      if (s0.timestamp <= targetTime && targetTime <= s1.timestamp) {
+        const span = s1.timestamp - s0.timestamp;
+        const alpha = span > 0 ? (targetTime - s0.timestamp) / span : 1.0;
+        return {
+          position: {
+            x: s0.position.x + (s1.position.x - s0.position.x) * alpha,
+            y: s0.position.y + (s1.position.y - s0.position.y) * alpha,
+            z: s0.position.z + (s1.position.z - s0.position.z) * alpha
+          },
+          rotation: {
+            x: s0.rotation.x + (s1.rotation.x - s0.rotation.x) * alpha,
+            y: s0.rotation.y + (s1.rotation.y - s0.rotation.y) * alpha
+          },
+          isCrouching: alpha > 0.5 ? s1.isCrouching : s0.isCrouching
+        };
+      }
+    }
+
+    return {
+      position: { ...player.position },
+      rotation: { ...player.rotation },
+      isCrouching: !!player.isCrouching
+    };
+  }
+
+  applyDamageAndCheckKill(room, shooter, target, damage, hitPart, hitPoint, weaponType, shootData, rewoundVictimState) {
     target.health = Math.max(0, target.health - damage);
 
     // Confirm hit to shooter
@@ -373,7 +573,8 @@ export class RoomManager {
       damage,
       targetHealth: target.health,
       hitPoint,
-      weaponType
+      weaponType,
+      shotId: shootData.shotId
     });
 
     // Notify victim of damage taken
@@ -394,19 +595,25 @@ export class RoomManager {
       const killId = `kill_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
       const serverTimestamp = Date.now();
 
-      // Broadcast SYNCHRONIZED Kill Cam to BOTH clients!
+      // Broadcast complete self-contained kill cam payload to BOTH clients (Part 3)
       this.io.to(room.code).emit('kill_cam', {
         killId,
         serverTimestamp,
         durationMs: KILL_CAM_DURATION_MS,
         shooterId: shooter.socketId,
         shooterNumber: shooter.playerNumber,
+        shooterName: shooter.name,
+        shooterPos: { ...shooter.position },
+        shooterRot: { ...shooter.rotation },
         victimId: target.socketId,
         victimNumber: target.playerNumber,
-        origin: shootData.origin || shooter.position,
+        victimName: target.name,
+        victimPos: rewoundVictimState?.position || { ...target.position },
+        victimRot: rewoundVictimState?.rotation || { ...target.rotation },
         hitPoint,
         hitPart,
-        weaponType
+        weaponType,
+        isHeadshot: hitPart === 'head'
       });
 
       // After kill cam replay concludes, apply scores and trigger respawn
@@ -418,7 +625,6 @@ export class RoomManager {
           p2Kills: room.playerList[1].kills
         };
 
-        // Notify both clients that kill replay has finished and scores update
         this.io.to(room.code).emit('kill_cam_end', {
           killId,
           killerId: shooter.socketId,
@@ -512,7 +718,6 @@ export class RoomManager {
       ready: true
     });
 
-    // If both players have accepted rematch, reset match state completely
     const allReady = Array.from(room.players.values()).every(p => p.rematchReady);
     if (allReady && room.players.size === 2) {
       room.playerList.forEach((p, idx) => {
@@ -525,6 +730,7 @@ export class RoomManager {
         p.activeWeapon = 'sniper';
         p.position = { ...SPAWN_POINTS[idx] };
         p.rotation = { x: 0, y: SPAWN_POINTS[idx].rotY };
+        p.positionHistory = [];
       });
       room.status = 'playing';
       room.startTime = Date.now();
@@ -544,6 +750,7 @@ export class RoomManager {
 
   handleDisconnect(socketId) {
     const roomCode = this.playerToRoom.get(socketId);
+    this.debugHitboxSubscribers.delete(socketId);
     if (!roomCode) return;
 
     const room = this.rooms.get(roomCode);
@@ -556,7 +763,6 @@ export class RoomManager {
       if (room.players.size === 0) {
         this.rooms.delete(roomCode);
       } else {
-        // Notify remaining opponent
         this.io.to(roomCode).emit('opponent_left', {
           message: 'Opponent left the match'
         });
@@ -594,14 +800,15 @@ export class RoomManager {
         this.clearRoomTimers(room);
         for (const pid of room.players.keys()) {
           this.playerToRoom.delete(pid);
+          this.debugHitboxSubscribers.delete(pid);
         }
         this.rooms.delete(code);
       }
     }
   }
 
-  // Hitbox math: Head (sphere), Body (cylinder), Legs (lower cylinder)
-  checkHit(origin, direction, targetPos) {
+  // Hitbox raycast math with 0.1 padding and crouch adaptation (Part 2)
+  checkHit(origin, direction, targetPos, isCrouching = false) {
     const len = Math.hypot(direction.x, direction.y, direction.z);
     if (len === 0) return { hit: false };
     const dx = direction.x / len;
@@ -609,15 +816,20 @@ export class RoomManager {
     const dz = direction.z / len;
     const dir = { x: dx, y: dy, z: dz };
 
-    // 1. Head Hitbox: Sphere at y + 1.55, radius 0.40
-    const headCenter = { x: targetPos.x, y: targetPos.y + 1.55, z: targetPos.z };
-    const headHit = this.intersectRaySphere(origin, dir, headCenter, 0.40);
+    // 1. Head Hitbox: Sphere with 0.1 padding (radius 0.45, center adapted for crouch)
+    const headY = targetPos.y + (isCrouching ? 1.35 : 1.95);
+    const headCenter = { x: targetPos.x, y: headY, z: targetPos.z };
+    const headHit = this.intersectRaySphere(origin, dir, headCenter, 0.45);
 
-    // 2. Body / Torso Hitbox: Cylinder from y + 0.85 to y + 1.45, radius 0.50
-    const bodyHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, targetPos.y + 0.85, targetPos.y + 1.45, 0.50);
+    // 2. Body / Torso Hitbox: Cylinder with 0.1 padding (radius 0.60)
+    const bodyMinY = targetPos.y + (isCrouching ? 0.50 : 0.85);
+    const bodyMaxY = targetPos.y + (isCrouching ? 1.30 : 1.65);
+    const bodyHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, bodyMinY, bodyMaxY, 0.60);
 
-    // 3. Legs Hitbox: Cylinder from y + 0.05 to y + 0.85, radius 0.45
-    const legsHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, targetPos.y + 0.05, targetPos.y + 0.85, 0.45);
+    // 3. Legs Hitbox: Cylinder with 0.1 padding (radius 0.55)
+    const legsMinY = targetPos.y + 0.05;
+    const legsMaxY = targetPos.y + (isCrouching ? 0.50 : 0.85);
+    const legsHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, legsMinY, legsMaxY, 0.55);
 
     let hits = [];
     if (headHit.hit) hits.push({ part: 'head', t: headHit.t, point: headHit.point });
@@ -626,7 +838,6 @@ export class RoomManager {
 
     if (hits.length === 0) return { hit: false };
 
-    // Pick hit closest to ray origin
     hits.sort((a, b) => a.t - b.t);
     return {
       hit: true,
@@ -649,7 +860,7 @@ export class RoomManager {
     if (disc < 0) return { hit: false };
 
     const t = -b - Math.sqrt(disc);
-    if (t < 0.2 || t > 180) return { hit: false };
+    if (t < 0.1 || t > 250) return { hit: false };
 
     return {
       hit: true,
@@ -679,8 +890,8 @@ export class RoomManager {
     const t1 = (-b - sqrtDisc) / (2 * a);
     const t2 = (-b + sqrtDisc) / (2 * a);
 
-    let t = t1 > 0.2 ? t1 : (t2 > 0.2 ? t2 : -1);
-    if (t < 0.2 || t > 180) return { hit: false };
+    let t = t1 > 0.1 ? t1 : (t2 > 0.1 ? t2 : -1);
+    if (t < 0.1 || t > 250) return { hit: false };
 
     const hitY = orig.y + dir.y * t;
     if (hitY >= minY && hitY <= maxY) {
@@ -698,33 +909,79 @@ export class RoomManager {
     return { hit: false };
   }
 
+  // 30 Hz Tick: records position snapshots & broadcasts compact volatile world state (Part 1 & Part 5)
   broadcastTick() {
     const now = Date.now();
+
     for (const [code, room] of this.rooms) {
       if (room.status !== 'playing' && room.status !== 'countdown') continue;
 
       const playersData = [];
+      const debugHitboxData = [];
+
       for (const p of room.playerList) {
-        playersData.push({
-          socketId: p.socketId,
-          playerNumber: p.playerNumber,
-          name: p.name,
-          position: p.position,
-          rotation: p.rotation,
-          activeWeapon: p.activeWeapon,
-          isScoped: p.isScoped,
-          health: p.health,
-          kills: p.kills,
-          deaths: p.deaths,
+        // Record snapshot in player's history ring buffer (Part 2)
+        p.positionHistory.push({
+          timestamp: now,
+          position: { x: p.position.x, y: p.position.y, z: p.position.z },
+          rotation: { x: p.rotation.x, y: p.rotation.y },
+          isCrouching: p.isCrouching,
           isAlive: p.isAlive,
           isProtected: p.isProtected && now < p.protectedUntil
         });
+        if (p.positionHistory.length > POSITION_HISTORY_SIZE) {
+          p.positionHistory.shift();
+        }
+
+        // Compact serialized player record:
+        // [socketId, playerNumber, name, x, y, z, rotX, rotY, weaponId, isScoped, isCrouching, health, isAlive, isProtected]
+        playersData.push({
+          id: p.socketId,
+          num: p.playerNumber,
+          name: p.name,
+          x: Math.round(p.position.x * 100) / 100,
+          y: Math.round(p.position.y * 100) / 100,
+          z: Math.round(p.position.z * 100) / 100,
+          rx: Math.round(p.rotation.x * 100) / 100,
+          ry: Math.round(p.rotation.y * 100) / 100,
+          w: p.activeWeapon,
+          s: p.isScoped ? 1 : 0,
+          c: p.isCrouching ? 1 : 0,
+          hp: p.health,
+          a: p.isAlive ? 1 : 0,
+          pr: (p.isProtected && now < p.protectedUntil) ? 1 : 0
+        });
+
+        // Debug hitbox coordinates
+        debugHitboxData.push({
+          socketId: p.socketId,
+          x: p.position.x,
+          y: p.position.y,
+          z: p.position.z,
+          crouch: !!p.isCrouching,
+          headY: p.position.y + (p.isCrouching ? 1.35 : 1.95),
+          bodyMinY: p.position.y + (p.isCrouching ? 0.50 : 0.85),
+          bodyMaxY: p.position.y + (p.isCrouching ? 1.30 : 1.65),
+          legsMinY: p.position.y + 0.05,
+          legsMaxY: p.position.y + (p.isCrouching ? 0.50 : 0.85)
+        });
       }
 
-      this.io.to(code).emit('world_state', {
-        timestamp: now,
+      // Compact volatile world state broadcast (dropping old updates is fine)
+      this.io.to(code).volatile.emit('world_state', {
+        t: now,
         players: playersData
       });
+
+      // Send debug server hitboxes to subscribed debug clients (Part 0)
+      for (const [socketId] of room.players) {
+        if (this.debugHitboxSubscribers.has(socketId)) {
+          this.io.to(socketId).volatile.emit('debug_server_hitboxes', {
+            timestamp: now,
+            hitboxes: debugHitboxData
+          });
+        }
+      }
     }
   }
 }
