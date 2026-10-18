@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Babylon Arena 1v1 Sniper & Melee Duels</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./src/style.css" />
+  <script>
+    window.onerror = function(msg, url, line, col, error) {
+      const errInfo = { msg, url, line, col, stack: error ? error.stack : null };
+      fetch('/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(errInfo)
+      }).catch(function() {});
+      console.error('GLOBAL ERROR:', errInfo);
+    };
+    window.addEventListener('unhandledrejection', function(e) {
+      const errInfo = { reason: e.reason ? (e.reason.stack || e.reason.message || e.reason) : 'unknown rejection' };
+      fetch('/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(errInfo)
+      }).catch(function() {});
+      console.error('UNHANDLED REJECTION:', errInfo);
+    });
+  </script>
+</head>
+<body>
+  <!-- 3D Babylon.js Canvas -->
+  <canvas id="renderCanvas"></canvas>
+
+  <!-- Performance Debug Overlay (Toggle with F3) -->
+  <div id="debug-overlay" class="debug-overlay hidden">
+    <div class="debug-title">PERFORMANCE METRICS [F3]</div>
+    <div class="debug-row"><span>FPS:</span> <span id="debug-fps" class="debug-val">60</span></div>
+    <div class="debug-row"><span>DRAW CALLS:</span> <span id="debug-draw-calls" class="debug-val">0</span></div>
+    <div class="debug-row"><span>ACTIVE MESHES:</span> <span id="debug-active-meshes" class="debug-val">0</span></div>
+    <div class="debug-row"><span>PARTICLES:</span> <span id="debug-particles" class="debug-val">0</span></div>
+  </div>
+
+  <!-- Loading Screen -->
+  <div id="loading-screen" class="modal-screen">
+    <div class="modal-card">
+      <h1 class="game-title">BABYLON ARENA</h1>
+      <p class="pulse-text">INITIALIZING 160x160 ARENA & 3D ENGINE...</p>
+    </div>
+  </div>
+
+  <!-- 3-2-1 Synchronized Match Countdown Overlay -->
+  <div id="countdown-overlay" class="modal-screen hidden">
+    <div class="modal-card countdown-card">
+      <div class="countdown-eyebrow">DUEL IMMINENT</div>
+      <div id="countdown-number" class="countdown-number">3</div>
+      <div id="countdown-matchup" class="countdown-matchup">PLAYER 1 vs PLAYER 2</div>
+      <div class="countdown-subtext">WEAPONS HOT IN SECONDS</div>
+    </div>
+  </div>
+
+  <!-- UI & HUD Layers -->
+  <div class="ui-layer">
+    <!-- Main Menu -->
+    <div id="main-menu" class="modal-screen hidden">
+      <div class="modal-card">
+        <h1 class="game-title">SNIPER 1V1</h1>
+        <p class="game-subtitle">160x160 BROWSER SNIPER & MELEE ARENA</p>
+
+        <div class="btn-group">
+          <button id="btn-open-practice" class="btn-primary">PRACTICE VS BOT</button>
+          <button id="btn-open-online" class="btn-secondary">ONLINE 1V1 MATCH</button>
+          <button id="btn-open-settings" class="btn-secondary">SETTINGS</button>
+        </div>
+
+        <div class="controls-guide">
+          <div class="ctrl-header">COMBAT CONTROLS</div>
+          <div class="ctrl-grid">
+            <div class="ctrl-row"><kbd>WASD</kbd><span>Move (4.5 or 6.0 u/s)</span></div>
+            <div class="ctrl-row"><kbd>Mouse</kbd><span>Aim / Look</span></div>
+            <div class="ctrl-row"><kbd>Shift</kbd><span>Sprint (7.5 or 10.0 u/s)</span></div>
+            <div class="ctrl-row"><kbd>1 / 2 / Wheel</kbd><span>Switch Sniper / Knife</span></div>
+            <div class="ctrl-row"><kbd>Right Click</kbd><span>Optical Scope (Sniper)</span></div>
+            <div class="ctrl-row"><kbd>Shift in Scope</kbd><span>Hold Breath (3s)</span></div>
+            <div class="ctrl-row"><kbd>Left Click</kbd><span>Fire Sniper / Slash Knife</span></div>
+            <div class="ctrl-row"><kbd>C / Ctrl</kbd><span>Crouch (2.5 or 3.5 u/s)</span></div>
+            <div class="ctrl-row"><kbd>R</kbd><span>Bolt Action Reload</span></div>
+            <div class="ctrl-row"><kbd>Space</kbd><span>Jump / Skip Replay</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Practice Mode Difficulty Selector Modal -->
+    <div id="practice-select-modal" class="modal-screen hidden">
+      <div class="modal-card">
+        <button class="btn-close-modal">×</button>
+        <h2 class="modal-title">SELECT BOT DIFFICULTY</h2>
+        <p class="game-subtitle">TUNE AI REACTION TIME & SPREAD</p>
+
+        <div class="diff-options">
+          <button class="btn-diff-select" data-diff="easy">EASY</button>
+          <button class="btn-diff-select" data-diff="medium">MEDIUM</button>
+          <button class="btn-diff-select" data-diff="hard">HARD</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Online 1v1 Modal -->
+    <div id="online-modal" class="modal-screen hidden">
+      <div class="modal-card">
+        <button class="btn-close-modal">×</button>
+        <h2 class="modal-title">ONLINE 1V1 MATCH</h2>
+
+        <!-- Connection Status Pill -->
+        <div id="online-conn-status" class="conn-pill disconnected">
+          <span class="conn-dot"></span>
+          <span class="conn-label">DISCONNECTED</span>
+        </div>
+
+        <div class="input-field-group">
+          <label class="input-label" for="input-player-name">YOUR CALLSIGN (MAX 12 CHARS)</label>
+          <input type="text" id="input-player-name" class="input-text" placeholder="PLAYER NAME" maxlength="12" value="Player 1" autocomplete="off" />
+        </div>
+
+        <div class="btn-group" style="margin-top: 14px;">
+          <button id="btn-create-room" class="btn-primary">CREATE NEW ROOM</button>
+
+          <div class="divider-text">— OR JOIN BY 4-LETTER CODE —</div>
+
+          <div class="join-row">
+            <input type="text" id="input-room-code" class="input-text code-input" placeholder="CODE" maxlength="4" style="text-transform: uppercase;" autocomplete="off" />
+            <button id="btn-join-room" class="btn-secondary join-btn" disabled>JOIN</button>
+          </div>
+        </div>
+
+        <p id="online-error-msg" class="error-text hidden"></p>
+      </div>
+    </div>
+
+    <!-- Waiting Room Modal -->
+    <div id="waiting-modal" class="modal-screen hidden">
+      <div class="modal-card">
+        <button class="btn-close-modal">×</button>
+        <h2 class="modal-title">ROOM CREATED</h2>
+        <p class="game-subtitle">SHARE THIS 4-LETTER CODE WITH YOUR OPPONENT</p>
+
+        <div class="room-code-box">
+          <div id="display-room-code" class="room-code-val">----</div>
+        </div>
+
+        <div class="btn-group">
+          <button id="btn-copy-code" class="btn-primary">COPY CODE</button>
+          <button id="btn-cancel-room" class="btn-secondary btn-cancel">CANCEL</button>
+        </div>
+
+        <p class="pulse-text" style="margin-top: 18px;">WAITING FOR OPPONENT TO JOIN...</p>
+      </div>
+    </div>
+
+    <!-- Pause Menu (ESC) -->
+    <div id="pause-menu" class="modal-screen hidden">
+      <div class="modal-card">
+        <h2 class="modal-title">MATCH PAUSED</h2>
+        <p class="game-subtitle">CLICK RESUME TO RE-LOCK POINTER</p>
+
+        <div class="btn-group">
+          <button id="btn-resume" class="btn-primary">RESUME MATCH</button>
+          <button id="btn-pause-settings" class="btn-secondary">SETTINGS</button>
+          <button id="btn-leave-match" class="btn-danger">LEAVE MATCH</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-screen hidden">
+      <div class="modal-card">
+        <button class="btn-close-modal">×</button>
+        <h2 class="modal-title">SETTINGS</h2>
+
+        <div class="setting-row">
+          <span class="setting-label">MOUSE SENSITIVITY</span>
+          <div class="setting-ctrl">
+            <input type="range" id="slider-sensitivity" class="slider-input" min="0.5" max="5.0" step="0.1" value="2.0" />
+            <span id="val-sensitivity" class="setting-val">2.0</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">INVERT MOUSE Y</span>
+          <div class="setting-ctrl">
+            <input type="checkbox" id="check-invert-y" style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary-accent);" />
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">MASTER VOLUME</span>
+          <div class="setting-ctrl">
+            <input type="range" id="slider-volume" class="slider-input" min="0" max="1" step="0.05" value="0.5" />
+            <span id="val-volume" class="setting-val">50%</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">FIELD OF VIEW (FOV)</span>
+          <div class="setting-ctrl">
+            <input type="range" id="slider-fov" class="slider-input" min="60" max="100" step="1" value="70" />
+            <span id="val-fov" class="setting-val">70°</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">CINEMATIC KILL CAM</span>
+          <div class="setting-ctrl">
+            <input type="checkbox" id="check-bullet-cam" checked style="width: 20px; height: 20px; cursor: pointer; accent-color: var(--primary-accent);" />
+          </div>
+        </div>
+
+        <button id="btn-close-settings" class="btn-primary" style="margin-top: 10px; width: 100%;">APPLY & CLOSE</button>
+      </div>
+    </div>
+
+    <!-- Game Over Modal -->
+    <div id="game-over-modal" class="modal-screen hidden">
+      <div class="modal-card">
+        <h1 id="game-over-title" class="title victory">VICTORY</h1>
+        <p id="game-over-subtitle" class="game-subtitle">YOU ELIMINATED THE OPPONENT</p>
+
+        <div id="game-over-score" class="score-summary">FINAL SCORE: 10 - 7</div>
+
+        <div class="btn-group">
+          <button id="btn-rematch" class="btn-primary">REMATCH</button>
+          <button id="btn-menu-from-gameover" class="btn-secondary">MAIN MENU</button>
+        </div>
+
+        <p id="rematch-status" class="pulse-text"></p>
+      </div>
+    </div>
+
+    <!-- In-Game HUD -->
+    <div id="game-hud" class="hidden">
+      <!-- Top-Left Kill Counter ("0/10") -->
+      <div id="top-left-kills" class="top-left-kills">
+        <div class="kills-header">
+          <span class="kills-dot"></span>
+          <span class="kills-label">KILLS</span>
+        </div>
+        <div class="kills-counter-box">
+          <span id="kills-target-counter" class="kills-count-text">0/10</span>
+          <span class="kills-target-sub">FIRST TO 10 WINS</span>
+        </div>
+      </div>
+
+      <!-- Damage Vignette Flash -->
+      <div id="damage-vignette" class="hidden"></div>
+
+      <!-- Directional Damage Indicator -->
+      <div id="damage-indicator" class="hidden"></div>
+
+      <!-- Crosshair & Hitmarker -->
+      <div id="crosshair">
+        <div class="ch-dot"></div>
+        <div class="ch-line top"></div>
+        <div class="ch-line bottom"></div>
+        <div class="ch-line left"></div>
+        <div class="ch-line right"></div>
+      </div>
+
+      <div id="hitmarker" class="hidden">
+        <div class="hm-tick tl"></div>
+        <div class="hm-tick tr"></div>
+        <div class="hm-tick bl"></div>
+        <div class="hm-tick br"></div>
+      </div>
+
+      <!-- Top Banner: Score & Timer -->
+      <div class="top-banner">
+        <div class="score-box">
+          <span id="score-label-player" style="font-size: 0.85rem; color: var(--text-muted);">YOU</span>
+          <span id="score-player" class="score-num player">0</span>
+          <span class="score-colon">:</span>
+          <span id="score-enemy" class="score-num enemy">0</span>
+          <span id="score-label-enemy" style="font-size: 0.85rem; color: var(--text-muted);">ENEMY</span>
+        </div>
+        <div class="match-timer-box">
+          <span id="match-timer">00:00</span>
+        </div>
+      </div>
+
+      <!-- Ping Display -->
+      <div id="ping-display" class="ping-indicator">24ms</div>
+
+      <!-- Spawn Protection Banner -->
+      <div id="spawn-protect-indicator" class="hidden">SPAWN PROTECTION ACTIVE</div>
+
+      <!-- Kill Feed -->
+      <div id="kill-feed"></div>
+
+      <!-- Bottom Left: Health & Sprint Stamina -->
+      <div class="hud-health">
+        <div class="health-header">
+          <span class="health-label">VITAL SIGNS</span>
+          <span class="health-number"><span id="health-val">100</span> HP</span>
+        </div>
+        <div class="health-bar-container">
+          <div id="health-bar-fill" class="health-bar-fill"></div>
+        </div>
+
+        <div class="stamina-header">
+          <span class="stamina-label">STAMINA [SHIFT]</span>
+        </div>
+        <div class="stamina-bar-container">
+          <div id="stamina-bar-fill" class="stamina-bar-fill"></div>
+        </div>
+      </div>
+
+      <!-- Fullscreen Sniper Scope Overlay -->
+      <div id="sniper-scope" class="sniper-scope hidden">
+        <div class="scope-vignette"></div>
+        <div class="scope-lens">
+          <div class="scope-crosshair-h"></div>
+          <div class="scope-crosshair-v"></div>
+          <div class="scope-circle"></div>
+          <div class="scope-inner-circle"></div>
+          <div class="scope-mil-dots">
+            <span class="mil-dot" style="top: 32%;"></span>
+            <span class="mil-dot" style="top: 41%;"></span>
+            <span class="mil-dot" style="top: 59%;"></span>
+            <span class="mil-dot" style="top: 68%;"></span>
+            <span class="mil-dot-h" style="left: 32%;"></span>
+            <span class="mil-dot-h" style="left: 41%;"></span>
+            <span class="mil-dot-h" style="left: 59%;"></span>
+            <span class="mil-dot-h" style="left: 68%;"></span>
+          </div>
+          <div class="scope-indicator">4.7X MAG • .50 BMG</div>
+        </div>
+      </div>
+
+      <!-- Bottom Right: Weapon Slots & Ammo -->
+      <div class="hud-weapon-panel">
+        <div class="weapon-slot-bar">
+          <div id="slot-sniper" class="weapon-slot-pill active">
+            <span class="slot-num">1</span>
+            <span class="slot-name">SNIPER .50</span>
+          </div>
+          <div id="slot-knife" class="weapon-slot-pill">
+            <span class="slot-num">2</span>
+            <span class="slot-name">KNIFE</span>
+          </div>
+        </div>
+
+        <div class="hud-ammo">
+          <span id="weapon-name-display" class="weapon-name">HEAVY SNIPER .50 BMG</span>
+          <div class="ammo-display">
+            <span id="ammo-val" class="ammo-current">5</span>
+            <span id="ammo-divider" class="ammo-divider">/</span>
+            <span id="reserve-val" class="ammo-reserve">25</span>
+          </div>
+          <div id="reload-notice" class="reload-notice hidden">BOLT RELOADING...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
