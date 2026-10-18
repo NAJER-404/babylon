@@ -475,9 +475,14 @@ export class OpponentCharacter {
     const ctx = this.nameTagTexture.getContext();
     ctx.clearRect(0, 0, 256, 64);
 
-    // Background pill
+    // Background pill (with cross-browser fallback for roundRect)
     ctx.fillStyle = 'rgba(10, 15, 26, 0.75)';
-    ctx.roundRect(4, 4, 248, 56, 8);
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(4, 4, 248, 56, 8);
+    } else {
+      ctx.rect(4, 4, 248, 56);
+    }
     ctx.fill();
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 2;

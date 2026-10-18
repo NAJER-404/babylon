@@ -193,7 +193,9 @@ export class ScopeOverlay {
 
   // Derive movement speed multiplier (1.0 in hip down to ~0.33 when fully scoped: 4.5 * 0.33 = 1.5 u/s)
   getMoveSpeedMultiplier() {
-    const targetMultiplier = CONFIG.PLAYER.SCOPED_SPEED / CONFIG.PLAYER.WALK_SPEED; // 1.5 / 4.5 = 0.333
+    const scopedSpeed = CONFIG.PLAYER.SCOPED_SPEED || CONFIG.PLAYER.KINEMATICS?.sniper?.SCOPED_SPEED || 1.5;
+    const walkSpeed = CONFIG.PLAYER.WALK_SPEED || CONFIG.PLAYER.KINEMATICS?.sniper?.WALK_SPEED || 4.5;
+    const targetMultiplier = scopedSpeed / walkSpeed; // 1.5 / 4.5 = 0.333
     return 1.0 - this.blend * (1.0 - targetMultiplier);
   }
 

@@ -69,116 +69,136 @@ export class Game {
   }
 
   init() {
-    // 1. Babylon.js Engine & Scene
-    this.engine = new Engine(this.canvas, true, {
-      preserveDrawingBuffer: false,
-      stencil: false,
-      powerPreference: 'high-performance'
-    });
-    this.engine.setHardwareScalingLevel(1.0);
+    try {
+      // 1. Babylon.js Engine & Scene
+      this.engine = new Engine(this.canvas, true, {
+        preserveDrawingBuffer: false,
+        stencil: false,
+        powerPreference: 'high-performance'
+      });
+      this.engine.setHardwareScalingLevel(1.0);
 
-    this.scene = new Scene(this.engine);
-    this.scene.collisionsEnabled = true;
-    this.scene.gravity = new Vector3(0, CONFIG.PLAYER.GRAVITY, 0);
-    this.scene.skipPointerMovePicking = true;
-    this.scene.autoClear = true;
-    this.scene.autoClearDepthAndStencil = true;
+      this.scene = new Scene(this.engine);
+      this.scene.collisionsEnabled = true;
+      this.scene.gravity = new Vector3(0, CONFIG.PLAYER.GRAVITY, 0);
+      this.scene.skipPointerMovePicking = true;
+      this.scene.autoClear = true;
+      this.scene.autoClearDepthAndStencil = true;
 
-    // 2. Build 160x160 3D Arena
-    this.mapBuilder = new MapBuilder(this.scene);
-    const mapData = this.mapBuilder.build();
-    this.shadowGenerator = mapData.shadowGenerator;
-    this.coverMeshes = mapData.coverMeshes;
+      // 2. Build 160x160 3D Arena
+      this.mapBuilder = new MapBuilder(this.scene);
+      const mapData = this.mapBuilder.build();
+      this.shadowGenerator = mapData.shadowGenerator;
+      this.coverMeshes = mapData.coverMeshes;
 
-    // 3. Initialize Player & Weapon System
-    this.player = new PlayerController(this.scene, this.canvas, this.audio);
-    this.weapon = new WeaponSystem(this.scene, this.player.camera, this.audio, this.ui);
-    this.player.setWeaponSystem(this.weapon);
+      // 3. Initialize Player & Weapon System
+      this.player = new PlayerController(this.scene, this.canvas, this.audio);
+      this.weapon = new WeaponSystem(this.scene, this.player.camera, this.audio, this.ui);
+      this.player.setWeaponSystem(this.weapon);
 
-    // 4. Initialize Sniper Scope, X-Ray, Blood & Bullet Cam
-    this.scopeOverlay = new ScopeOverlay(this.audio, this.ui);
-    this.xrayEffect = new XRayEffect(this.scene, this.audio);
-    this.bloodEffect = new BloodEffect(this.scene, this.audio);
-    this.bulletCam = new BulletCam(
-      this.scene,
-      this.player.camera,
-      this.xrayEffect,
-      this.bloodEffect,
-      this.audio,
-      this.ui
-    );
-    this.player.setScopeOverlay(this.scopeOverlay);
-
-    // 5. Wire Player Callbacks
-    this.player.onShootCallback = () => {
-      this.handlePlayerAttack();
-    };
-
-    this.player.onReloadCallback = () => {
-      this.weapon.reload();
-    };
-
-    this.player.onSwitchWeaponCallback = (weaponId) => {
-      if (this.mode === GAME_MODE.ONLINE) {
-        this.network.sendSwitchWeapon(weaponId);
-      }
-    };
-
-    this.player.onStaminaChangeCallback = (stamina, maxStamina) => {
-      this.ui.updateStamina(stamina, maxStamina);
-    };
-
-    this.player.onPointerLockChangeCallback = (isLocked) => {
-      if (!isLocked && this.mode !== GAME_MODE.NONE && !this.ui.isMenuOpen) {
-        inputManager.clearAll();
-        if (this.scopeOverlay) this.scopeOverlay.forceReset();
-        this.ui.showPauseMenu();
-      } else if (isLocked) {
-        this.ui.hidePauseMenu();
-      }
-    };
-
-    this.player.onDamageCallback = (dmg, attackerPos, hitPart, newHp) => {
-      this.ui.updateHealth(newHp);
-      this.ui.showDamageFeedback(
-        dmg,
-        attackerPos,
-        this.player.camera.position,
-        this.player.yaw
+      // 4. Initialize Sniper Scope, X-Ray, Blood & Bullet Cam
+      this.scopeOverlay = new ScopeOverlay(this.audio, this.ui);
+      this.xrayEffect = new XRayEffect(this.scene, this.audio);
+      this.bloodEffect = new BloodEffect(this.scene, this.audio);
+      this.bulletCam = new BulletCam(
+        this.scene,
+        this.player.camera,
+        this.xrayEffect,
+        this.bloodEffect,
+        this.audio,
+        this.ui
       );
-    };
+      this.player.setScopeOverlay(this.scopeOverlay);
 
-    // 6. Wire UI Callbacks
-    this.setupUICallbacks();
+      // 5. Wire Player Callbacks
+      this.player.onShootCallback = () => {
+        this.handlePlayerAttack();
+      };
 
-    // 7. Wire Network Callbacks
-    this.setupNetworkCallbacks();
+      this.player.onReloadCallback = () => {
+        this.weapon.reload();
+      };
 
-    // 8. Start Render Loop
-    this.engine.runRenderLoop(() => {
-      this.renderTick();
-    });
+      this.player.onSwitchWeaponCallback = (weaponId) => {
+        if (this.mode === GAME_MODE.ONLINE) {
+          this.network.sendSwitchWeapon(weaponId);
+        }
+      };
 
-    // 9. Handle Window Resize
-    window.addEventListener('resize', () => {
+      this.player.onStaminaChangeCallback = (stamina, maxStamina) => {
+        this.ui.updateStamina(stamina, maxStamina);
+      };
+
+      this.player.onPointerLockChangeCallback = (isLocked) => {
+        if (!isLocked && this.mode !== GAME_MODE.NONE && !this.ui.isMenuOpen) {
+          inputManager.clearAll();
+          if (this.scopeOverlay) this.scopeOverlay.forceReset();
+          this.ui.showPauseMenu();
+        } else if (isLocked) {
+          this.ui.hidePauseMenu();
+        }
+      };
+
+      this.player.onDamageCallback = (dmg, attackerPos, hitPart, newHp) => {
+        this.ui.updateHealth(newHp);
+        this.ui.showDamageFeedback(
+          dmg,
+          attackerPos,
+          this.player.camera.position,
+          this.player.yaw
+        );
+      };
+
+      // 6. Wire UI Callbacks
+      this.setupUICallbacks();
+
+      // 7. Wire Network Callbacks
+      this.setupNetworkCallbacks();
+
+      // 8. Start Render Loop
+      this.engine.runRenderLoop(() => {
+        this.renderTick();
+      });
+
+      // 9. Handle Window Resize
+      window.addEventListener('resize', () => {
+        this.engine.resize();
+      });
       this.engine.resize();
-    });
-    this.engine.resize();
 
-    // 10. Hide loading screen and show Main Menu
-    let hasLoaded = false;
-    const onSceneReady = () => {
-      if (hasLoaded) return;
-      hasLoaded = true;
-      this.ui.hideLoadingScreen();
-      this.ui.showMainMenu();
-    };
+      // 10. Hide loading screen and show Main Menu
+      let hasLoaded = false;
+      const onSceneReady = () => {
+        if (hasLoaded) return;
+        hasLoaded = true;
+        this.ui.hideLoadingScreen();
+        this.ui.showMainMenu();
+      };
 
-    if (this.scene.isReady()) {
-      onSceneReady();
-    } else {
-      this.scene.executeWhenReady(onSceneReady);
-      setTimeout(onSceneReady, 350);
+      if (this.scene.isReady()) {
+        onSceneReady();
+      } else {
+        this.scene.executeWhenReady(onSceneReady);
+        setTimeout(onSceneReady, 500);
+      }
+    } catch (err) {
+      console.error('CRITICAL GAME INIT ERROR:', err);
+      const loadingScreen = document.getElementById('loading-screen');
+      if (loadingScreen) {
+        loadingScreen.innerHTML = `
+          <div class="modal-card" style="border: 2px solid #ef4444; max-width: 600px; padding: 24px;">
+            <h1 class="game-title" style="color: #ef4444; font-size: 2rem;">INITIALIZATION ERROR</h1>
+            <p style="color: #fca5a5; font-size: 1.1rem; margin-top: 10px;">${err?.message || err}</p>
+            <pre style="text-align: left; background: #0b0f19; padding: 12px; border-radius: 6px; font-size: 0.8rem; color: #94a3b8; overflow: auto; max-height: 180px; margin-top: 12px;">${err?.stack || ''}</pre>
+            <button class="btn-primary" style="margin-top: 18px; width: 100%;" onclick="window.location.reload()">RELOAD GAME</button>
+          </div>
+        `;
+      }
+      fetch('/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'INIT_ERROR', message: err?.message, stack: err?.stack })
+      }).catch(() => {});
     }
   }
 

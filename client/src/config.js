@@ -38,6 +38,13 @@ export const CONFIG = {
     DEFAULT_SENSITIVITY: 0.0020,
     DEFAULT_FOV: 1.22,               // ~70 degrees vertical FOV
 
+    // Top-level default kinematics
+    WALK_SPEED: 4.5,
+    SPRINT_SPEED: 7.5,
+    CROUCH_SPEED: 2.5,
+    SCOPED_SPEED: 1.5,
+    JUMP_VELOCITY: 5.2,
+
     // Weapon-dependent Kinematics Profiles
     KINEMATICS: {
       sniper: {
@@ -154,6 +161,8 @@ export const CONFIG = {
     TEAM_BLUE_ACCENT: '#1d4ed8',
     TEAM_BOT_VEST: '#f97316',
     TEAM_BOT_ACCENT: '#c2410c',
+    ROBLOX_TORSO_RED: '#ef4444',
+    ROBLOX_TORSO_BLUE: '#3b82f6',
     TACTICAL_HELMET: '#1e293b',
     TACTICAL_PANTS: '#0f172a',
     TACTICAL_BOOTS: '#020617',

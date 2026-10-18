@@ -75,47 +75,56 @@ export class MapBuilder {
     this.shadowGenerator.bias = 0.003;
   }
 
+  safeColor(hex, fallback = '#ffffff') {
+    try {
+      if (typeof hex === 'string' && hex.length > 0) {
+        return Color3.FromHexString(hex);
+      }
+    } catch (e) {}
+    return Color3.FromHexString(fallback);
+  }
+
   createMaterials() {
     // Floor Slate
     this.matFloor = new StandardMaterial('matFloor', this.scene);
-    this.matFloor.diffuseColor = Color3.FromHexString(CONFIG.COLORS.FLOOR);
+    this.matFloor.diffuseColor = this.safeColor(CONFIG.COLORS?.FLOOR, '#333b4d');
     this.matFloor.specularColor = new Color3(0.12, 0.12, 0.16);
 
     // Grid Tile Accent
     this.matFloorGrid = new StandardMaterial('matFloorGrid', this.scene);
-    this.matFloorGrid.diffuseColor = Color3.FromHexString(CONFIG.COLORS.FLOOR_GRID);
+    this.matFloorGrid.diffuseColor = this.safeColor(CONFIG.COLORS?.FLOOR_GRID, '#40495d');
     this.matFloorGrid.specularColor = new Color3(0.10, 0.10, 0.14);
 
     // Perimeter Walls
     this.matWall = new StandardMaterial('matWall', this.scene);
-    this.matWall.diffuseColor = Color3.FromHexString(CONFIG.COLORS.WALLS);
+    this.matWall.diffuseColor = this.safeColor(CONFIG.COLORS?.WALLS, '#3b4354');
     this.matWall.specularColor = new Color3(0.10, 0.10, 0.12);
 
     // Neon Cyan Wall Trim
     this.matWallTrim = new StandardMaterial('matWallTrim', this.scene);
-    this.matWallTrim.diffuseColor = Color3.FromHexString(CONFIG.COLORS.WALL_TRIM);
+    this.matWallTrim.diffuseColor = this.safeColor(CONFIG.COLORS?.WALL_TRIM, '#00f2fe');
     this.matWallTrim.emissiveColor = new Color3(0.04, 0.40, 0.50);
 
     // Crates
     this.matCrate = new StandardMaterial('matCrate', this.scene);
-    this.matCrate.diffuseColor = Color3.FromHexString(CONFIG.COLORS.CRATE);
+    this.matCrate.diffuseColor = this.safeColor(CONFIG.COLORS?.CRATE, '#b87352');
     this.matCrate.specularColor = new Color3(0.18, 0.14, 0.08);
 
     this.matCrateTrim = new StandardMaterial('matCrateTrim', this.scene);
-    this.matCrateTrim.diffuseColor = Color3.FromHexString(CONFIG.COLORS.CRATE_TRIM);
+    this.matCrateTrim.diffuseColor = this.safeColor(CONFIG.COLORS?.CRATE_TRIM, '#9c5339');
 
     // Pillars & Bunkers
     this.matPillar = new StandardMaterial('matPillar', this.scene);
-    this.matPillar.diffuseColor = Color3.FromHexString(CONFIG.COLORS.PILLAR);
+    this.matPillar.diffuseColor = this.safeColor(CONFIG.COLORS?.PILLAR, '#434c5e');
     this.matPillar.specularColor = new Color3(0.15, 0.15, 0.18);
 
     // Elevated Platforms
     this.matPlatform = new StandardMaterial('matPlatform', this.scene);
-    this.matPlatform.diffuseColor = Color3.FromHexString(CONFIG.COLORS.PLATFORM);
+    this.matPlatform.diffuseColor = this.safeColor(CONFIG.COLORS?.PLATFORM, '#373f50');
     this.matPlatform.specularColor = new Color3(0.12, 0.12, 0.16);
 
     this.matPlatformEdge = new StandardMaterial('matPlatformEdge', this.scene);
-    this.matPlatformEdge.diffuseColor = Color3.FromHexString(CONFIG.COLORS.PLATFORM_EDGE);
+    this.matPlatformEdge.diffuseColor = this.safeColor(CONFIG.COLORS?.PLATFORM_EDGE, '#e2e8f0');
     this.matPlatformEdge.emissiveColor = new Color3(0.18, 0.22, 0.26);
 
     // Dark Steel Truss
@@ -125,11 +134,17 @@ export class MapBuilder {
 
     // Spawn Pads
     this.matSpawnRed = new StandardMaterial('matSpawnRed', this.scene);
-    this.matSpawnRed.diffuseColor = Color3.FromHexString(CONFIG.COLORS.ROBLOX_TORSO_RED);
+    this.matSpawnRed.diffuseColor = this.safeColor(
+      CONFIG.COLORS?.TEAM_RED_VEST || CONFIG.COLORS?.ROBLOX_TORSO_RED,
+      '#ef4444'
+    );
     this.matSpawnRed.emissiveColor = new Color3(0.35, 0.08, 0.08);
 
     this.matSpawnBlue = new StandardMaterial('matSpawnBlue', this.scene);
-    this.matSpawnBlue.diffuseColor = Color3.FromHexString(CONFIG.COLORS.ROBLOX_TORSO_BLUE);
+    this.matSpawnBlue.diffuseColor = this.safeColor(
+      CONFIG.COLORS?.TEAM_BLUE_VEST || CONFIG.COLORS?.ROBLOX_TORSO_BLUE,
+      '#3b82f6'
+    );
     this.matSpawnBlue.emissiveColor = new Color3(0.08, 0.20, 0.45);
   }
 
@@ -139,7 +154,7 @@ export class MapBuilder {
     skyMat.backFaceCulling = false;
     skyMat.disableLighting = true;
     skyMat.diffuseColor = new Color3(0, 0, 0);
-    skyMat.emissiveColor = Color3.FromHexString(CONFIG.COLORS.SKY);
+    skyMat.emissiveColor = this.safeColor(CONFIG.COLORS?.SKY, '#38bdf8');
     skybox.material = skyMat;
     skybox.infiniteDistance = true;
     skybox.isPickable = false;

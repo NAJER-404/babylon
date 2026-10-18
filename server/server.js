@@ -71,9 +71,7 @@ app.get('/health', (req, res) => {
 
 // Client diagnostic logging endpoint
 app.post('/api/client-log', (req, res) => {
-  if (isDev) {
-    console.log('\n>>> [CLIENT ERROR]:', JSON.stringify(req.body, null, 2), '\n');
-  }
+  console.log('[CLIENT ERROR REPORT]:', JSON.stringify(req.body));
   res.json({ ok: true });
 });
 
