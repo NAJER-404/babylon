@@ -690,23 +690,57 @@ export class OpponentCharacter {
   }
 
   pushNetworkUpdate(update) {
-    // Support compact protocol as well as verbose
-    const posX = update.p ? update.p[0] : (update.position ? update.position.x : this.rootNode.position.x);
-    const posY = update.p ? update.p[1] : (update.position ? update.position.y : this.rootNode.position.y);
-    const posZ = update.p ? update.p[2] : (update.position ? update.position.z : this.rootNode.position.z);
+    if (!update) return;
 
-    const rotY = update.r ? update.r[1] : (update.rotation ? update.rotation.y : 0);
-    const pitch = update.r ? update.r[0] : (update.rotation ? update.rotation.x : 0);
+    // Support both compact protocol keys (x, y, z, rx, ry, vx, vy, vz, hp, a, pr, w, s, c, t)
+    // and verbose object/array protocol keys (p, r, v, position, rotation, velocity, health, etc.)
+    let posX = this.rootNode.position.x;
+    if (update.x !== undefined) posX = Number(update.x);
+    else if (update.p && update.p.length >= 3) posX = Number(update.p[0]);
+    else if (update.position?.x !== undefined) posX = Number(update.position.x);
 
-    const vx = update.v ? update.v[0] : (update.velocity ? update.velocity.x : 0);
-    const vy = update.v ? update.v[1] : (update.velocity ? update.velocity.y : 0);
-    const vz = update.v ? update.v[2] : (update.velocity ? update.velocity.z : 0);
+    let posY = this.rootNode.position.y;
+    if (update.y !== undefined) posY = Number(update.y);
+    else if (update.p && update.p.length >= 3) posY = Number(update.p[1]);
+    else if (update.position?.y !== undefined) posY = Number(update.position.y);
+
+    let posZ = this.rootNode.position.z;
+    if (update.z !== undefined) posZ = Number(update.z);
+    else if (update.p && update.p.length >= 3) posZ = Number(update.p[2]);
+    else if (update.position?.z !== undefined) posZ = Number(update.position.z);
+
+    let rotY = this.rootNode.rotation.y;
+    if (update.ry !== undefined) rotY = Number(update.ry);
+    else if (update.r && update.r.length >= 2) rotY = Number(update.r[1]);
+    else if (update.rotation?.y !== undefined) rotY = Number(update.rotation.y);
+
+    let pitch = this.aimPitch;
+    if (update.rx !== undefined) pitch = Number(update.rx);
+    else if (update.r && update.r.length >= 2) pitch = Number(update.r[0]);
+    else if (update.rotation?.x !== undefined) pitch = Number(update.rotation.x);
+
+    let vx = 0, vy = 0, vz = 0;
+    if (update.vx !== undefined) vx = Number(update.vx);
+    else if (update.v && update.v.length >= 3) vx = Number(update.v[0]);
+    else if (update.velocity?.x !== undefined) vx = Number(update.velocity.x);
+
+    if (update.vy !== undefined) vy = Number(update.vy);
+    else if (update.v && update.v.length >= 3) vy = Number(update.v[1]);
+    else if (update.velocity?.y !== undefined) vy = Number(update.velocity.y);
+
+    if (update.vz !== undefined) vz = Number(update.vz);
+    else if (update.v && update.v.length >= 3) vz = Number(update.v[2]);
+    else if (update.velocity?.z !== undefined) vz = Number(update.velocity.z);
 
     const isCrouch = update.c !== undefined ? !!update.c : (update.isCrouching !== undefined ? !!update.isCrouching : false);
     const isScope = update.s !== undefined ? !!update.s : (update.isScoped !== undefined ? !!update.isScoped : false);
-    const activeWep = update.w !== undefined ? (update.w === 1 ? 'knife' : 'sniper') : update.activeWeapon;
+    const activeWep = (update.w !== undefined) ? ((update.w === 1 || update.w === 'knife') ? 'knife' : 'sniper') : update.activeWeapon;
+    const isAlive = update.a !== undefined ? !!update.a : (update.isAlive !== undefined ? !!update.isAlive : true);
+    const isProtected = update.pr !== undefined ? !!update.pr : (update.isProtected !== undefined ? !!update.isProtected : false);
+    const health = update.hp !== undefined ? Number(update.hp) : (update.health !== undefined ? Number(update.health) : this.health);
 
     this.isCrouching = isCrouch;
+    const timestamp = update.t || update.timestamp || Date.now();
 
     this.positionBuffer.push({
       x: posX,
@@ -717,23 +751,21 @@ export class OpponentCharacter {
       vz,
       rotY,
       pitch,
-      timestamp: update.t || update.timestamp || Date.now()
+      timestamp
     });
 
     if (this.positionBuffer.length > 30) {
       this.positionBuffer.shift();
     }
 
-    if (update.health !== undefined && update.health !== this.health) {
-      this.health = update.health;
+    if (health !== this.health) {
+      this.health = health;
       this.updateNameTag();
     }
-    if (update.isAlive !== undefined) {
-      this.setVisible(update.isAlive);
+    if (isAlive !== this.isAlive) {
+      this.setVisible(isAlive);
     }
-    if (update.isProtected !== undefined) {
-      this.setProtected(update.isProtected);
-    }
+    this.setProtected(isProtected);
     if (activeWep) {
       this.setActiveWeapon(activeWep);
     }
@@ -823,17 +855,22 @@ export class OpponentCharacter {
       const interpDelay = CONFIG.NETWORK?.INTERPOLATION_OFFSET_MS || 120;
       const maxExtrap = (CONFIG.NETWORK?.MAX_EXTRAPOLATION_MS || 200) / 1000;
       const estimatedServerTime = (Date.now() + (this.serverClockOffset || 0));
-      const renderTimestamp = estimatedServerTime - interpDelay;
 
       const oldest = this.positionBuffer[0];
       const newest = this.positionBuffer[this.positionBuffer.length - 1];
+
+      // Clock sanity guard: if renderTimestamp is wildly adrift, anchor to newest snapshot
+      let renderTimestamp = estimatedServerTime - interpDelay;
+      if (renderTimestamp < oldest.timestamp - 500 || renderTimestamp > newest.timestamp + 500) {
+        renderTimestamp = newest.timestamp - interpDelay;
+      }
 
       if (renderTimestamp <= oldest.timestamp) {
         this.targetPosition.set(oldest.x, oldest.y, oldest.z);
         this.targetRotationY = oldest.rotY;
         if (oldest.pitch !== undefined) this.aimPitch = oldest.pitch;
       } else if (renderTimestamp >= newest.timestamp) {
-        const extraSec = Math.min(maxExtrap, (renderTimestamp - newest.timestamp) / 1000);
+        const extraSec = Math.min(maxExtrap, Math.max(0, (renderTimestamp - newest.timestamp) / 1000));
         this.targetPosition.set(
           newest.x + (newest.vx || 0) * extraSec,
           newest.y + (newest.vy || 0) * extraSec,
@@ -868,14 +905,52 @@ export class OpponentCharacter {
         }
       }
 
-      const dx = this.targetPosition.x - this.rootNode.position.x;
-      const dz = this.targetPosition.z - this.rootNode.position.z;
-      moveSpeed = Math.hypot(dx, dz) / Math.max(0.001, dt);
+      const distToTarget = Math.hypot(
+        this.targetPosition.x - this.rootNode.position.x,
+        this.targetPosition.z - this.rootNode.position.z
+      );
+      if (distToTarget > 12.0) {
+        // Instant teleport/spawn snap
+        this.rootNode.position.copyFrom(this.targetPosition);
+        this.rootNode.rotation.y = this.targetRotationY;
+      } else {
+        const dx = this.targetPosition.x - this.rootNode.position.x;
+        const dy = this.targetPosition.y - this.rootNode.position.y;
+        const dz = this.targetPosition.z - this.rootNode.position.z;
+        moveSpeed = Math.hypot(dx, dz) / Math.max(0.001, dt);
 
-      this.rootNode.position.x += dx * Math.min(1.0, 18 * dt);
-      this.rootNode.position.y += (this.targetPosition.y - this.rootNode.position.y) * Math.min(1.0, 18 * dt);
-      this.rootNode.position.z += dz * Math.min(1.0, 18 * dt);
-      this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 15 * dt);
+        const smoothFactor = Math.min(1.0, 20 * dt);
+        this.rootNode.position.x += dx * smoothFactor;
+        this.rootNode.position.y += dy * smoothFactor;
+        this.rootNode.position.z += dz * smoothFactor;
+        this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 15 * dt);
+      }
+    } else if (this.positionBuffer.length === 1) {
+      // Immediate single-snapshot application (never stalls waiting for second packet)
+      const single = this.positionBuffer[0];
+      this.targetPosition.set(single.x, single.y, single.z);
+      this.targetRotationY = single.rotY;
+      if (single.pitch !== undefined) this.aimPitch = single.pitch;
+
+      const distToTarget = Math.hypot(
+        this.targetPosition.x - this.rootNode.position.x,
+        this.targetPosition.z - this.rootNode.position.z
+      );
+      if (distToTarget > 12.0) {
+        this.rootNode.position.copyFrom(this.targetPosition);
+        this.rootNode.rotation.y = this.targetRotationY;
+      } else {
+        const dx = this.targetPosition.x - this.rootNode.position.x;
+        const dy = this.targetPosition.y - this.rootNode.position.y;
+        const dz = this.targetPosition.z - this.rootNode.position.z;
+        moveSpeed = Math.hypot(dx, dz) / Math.max(0.001, dt);
+
+        const smoothFactor = Math.min(1.0, 20 * dt);
+        this.rootNode.position.x += dx * smoothFactor;
+        this.rootNode.position.y += dy * smoothFactor;
+        this.rootNode.position.z += dz * smoothFactor;
+        this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 15 * dt);
+      }
     }
 
     // Procedural Animation System

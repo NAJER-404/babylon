@@ -22,6 +22,12 @@ export class NetworkManager {
     this.fallbackTimer = null;
     this.hasRegisteredListeners = false;
 
+    // Background 30 Hz Send Loop (Dedicated Web Worker + Fallback)
+    this.sendWorker = null;
+    this.sendIntervalFallback = null;
+    this.getUpdatePayload = null;
+    this.lastPeriodicSendTime = 0;
+
     // Packet metrics (Part 0)
     this.packetsInCounter = 0;
     this.packetsOutCounter = 0;
@@ -389,6 +395,76 @@ export class NetworkManager {
     });
   }
 
+  // Dedicated 30 Hz Send Loop driven by Web Worker timer (not paused on window blur/tab switch)
+  startSendLoop(getUpdatePayload) {
+    this.stopSendLoop();
+    this.getUpdatePayload = getUpdatePayload;
+    this.lastPeriodicSendTime = Date.now();
+
+    // 1. Inline Web Worker timer immune to background tab throttling (Part 1)
+    try {
+      const workerBlob = new Blob([
+        `let timer = null;
+         self.onmessage = function(e) {
+           if (e.data === 'start') {
+             if (timer) clearInterval(timer);
+             timer = setInterval(function() {
+               self.postMessage('tick');
+             }, 33.333);
+           } else if (e.data === 'stop') {
+             if (timer) {
+               clearInterval(timer);
+               timer = null;
+             }
+           }
+         };`
+      ], { type: 'application/javascript' });
+
+      const workerUrl = URL.createObjectURL(workerBlob);
+      this.sendWorker = new Worker(workerUrl);
+      this.sendWorker.onmessage = () => {
+        this.emitPeriodicStateUpdate();
+      };
+      this.sendWorker.postMessage('start');
+    } catch (e) {
+      console.warn('[Network] Inline Worker timer creation failed, relying on interval fallback:', e);
+    }
+
+    // 2. Main thread fallback interval
+    this.sendIntervalFallback = setInterval(() => {
+      // If worker did not fire recently (>= 30ms), fire here
+      if (Date.now() - this.lastPeriodicSendTime >= 30) {
+        this.emitPeriodicStateUpdate();
+      }
+    }, 33.333);
+  }
+
+  stopSendLoop() {
+    if (this.sendWorker) {
+      try {
+        this.sendWorker.postMessage('stop');
+        this.sendWorker.terminate();
+      } catch (e) {}
+      this.sendWorker = null;
+    }
+    if (this.sendIntervalFallback) {
+      clearInterval(this.sendIntervalFallback);
+      this.sendIntervalFallback = null;
+    }
+    this.getUpdatePayload = null;
+  }
+
+  emitPeriodicStateUpdate() {
+    if (!this.socket || !this.socket.connected) return;
+    if (typeof this.getUpdatePayload === 'function') {
+      const state = this.getUpdatePayload();
+      if (state) {
+        this.lastPeriodicSendTime = Date.now();
+        this.sendPlayerUpdate(state);
+      }
+    }
+  }
+
   // Compact volatile 30 Hz player state updates (Part 1)
   sendPlayerUpdate(compactData) {
     if (!this.socket || !this.socket.connected) return;
@@ -453,6 +529,7 @@ export class NetworkManager {
   }
 
   disconnect() {
+    this.stopSendLoop();
     this.stopPingMonitor();
     clearTimeout(this.fallbackTimer);
     if (this.ppsInterval) clearInterval(this.ppsInterval);

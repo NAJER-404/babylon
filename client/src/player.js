@@ -542,14 +542,22 @@ export class PlayerController {
 
   applyPositionCorrection(correctedPos) {
     if (!correctedPos || !this.colliderMesh) return;
-    const dx = correctedPos.x - this.colliderMesh.position.x;
-    const dz = correctedPos.z - this.colliderMesh.position.z;
+    const targetX = correctedPos.x !== undefined ? correctedPos.x : (correctedPos.position?.x ?? this.colliderMesh.position.x);
+    const targetY = correctedPos.y !== undefined ? correctedPos.y : (correctedPos.position?.y ?? this.colliderMesh.position.y);
+    const targetZ = correctedPos.z !== undefined ? correctedPos.z : (correctedPos.position?.z ?? this.colliderMesh.position.z);
+
+    const dx = targetX - this.colliderMesh.position.x;
+    const dz = targetZ - this.colliderMesh.position.z;
     const distErr = Math.hypot(dx, dz);
 
     if (distErr > 2.0) {
       // Smoothly snap to server authoritative position if discrepancy > 2 units (Part 4)
-      this.colliderMesh.position.x = correctedPos.x;
-      this.colliderMesh.position.z = correctedPos.z;
+      this.colliderMesh.position.x = targetX;
+      this.colliderMesh.position.y = targetY;
+      this.colliderMesh.position.z = targetZ;
+      this.camera.position.x = targetX;
+      this.camera.position.y = targetY - (CONFIG.PLAYER.COLLIDER_HEIGHT / 2) + this.currentEyeHeight;
+      this.camera.position.z = targetZ;
       this.velocity.x = 0;
       this.velocity.z = 0;
     }
@@ -566,24 +574,35 @@ export class PlayerController {
     };
   }
 
-  // Compact 30 Hz Network State (Part 1)
+  // Compact 30 Hz Network State (Part 1 - heartbeat safe, includes velocity and status)
   getCompactNetworkState(estimatedServerTime) {
     const posX = Math.round(this.camera.position.x * 100) / 100;
     const posY = Math.round(this.camera.position.y * 100) / 100;
     const posZ = Math.round(this.camera.position.z * 100) / 100;
     const pitch = Math.round(this.pitch * 100) / 100;
     const yaw = Math.round(this.yaw * 100) / 100;
+    const vx = Math.round((this.velocity?.x || 0) * 100) / 100;
+    const vy = Math.round((this.velocity?.y || 0) * 100) / 100;
+    const vz = Math.round((this.velocity?.z || 0) * 100) / 100;
 
     return {
       x: posX,
       y: posY,
       z: posZ,
+      p: [posX, posY, posZ],
+      vx,
+      vy,
+      vz,
+      v: [vx, vy, vz],
       rx: pitch,
       ry: yaw,
+      r: [pitch, yaw],
       w: this.weaponSystem?.activeWeaponId === 'knife' ? 1 : 0,
       s: (this.scopeOverlay && this.weaponSystem?.activeWeaponId === 'sniper' && this.scopeOverlay.isScoped()) ? 1 : 0,
       c: this.isCrouching ? 1 : 0,
       sp: this.isSprinting ? 1 : 0,
+      hp: this.health,
+      a: this.isAlive ? 1 : 0,
       t: estimatedServerTime || Date.now()
     };
   }

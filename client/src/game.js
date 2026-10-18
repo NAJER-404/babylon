@@ -330,22 +330,39 @@ export class Game {
     };
 
     this.network.onWorldState = (data) => {
-      if (this.mode !== GAME_MODE.ONLINE) return;
+      if (this.mode !== GAME_MODE.ONLINE || !data?.players) return;
 
       const myId = this.network.socket?.id;
+      const myPlayerNum = this.player?.playerNumber || this.network.playerNumber;
+
       for (const p of data.players) {
-        if (p.socketId !== myId && this.opponent) {
+        const pId = p.socketId || p.id;
+        const pNum = p.playerNumber || p.num;
+
+        const isLocalPlayer = (myId && pId === myId) || (myPlayerNum && pNum === myPlayerNum);
+
+        if (!isLocalPlayer && this.opponent) {
           this.opponent.setServerClockOffset(this.network.serverClockOffset);
+          if (!p.timestamp && !p.t) {
+            p.timestamp = data.t || data.timestamp || Date.now();
+          }
           this.opponent.pushNetworkUpdate(p);
-        } else if (p.socketId === myId) {
-          this.ui.updateHealth(p.health);
+        } else if (isLocalPlayer) {
+          const hp = p.health !== undefined ? p.health : p.hp;
+          if (hp !== undefined && hp !== this.player.health) {
+            this.player.health = hp;
+            this.ui.updateHealth(hp);
+          }
         }
       }
     };
 
     this.network.onPositionCorrection = (data) => {
-      if (data && data.position) {
-        this.player.applyPositionCorrection(data.position);
+      if (data) {
+        const pos = data.position || { x: data.x, y: data.y, z: data.z };
+        if (pos.x !== undefined) {
+          this.player.applyPositionCorrection(pos);
+        }
       }
     };
 
@@ -562,34 +579,65 @@ export class Game {
     this.botAI = null;
 
     const myId = this.network.socket?.id;
-    const myInfo = matchData.players.find(p => p.socketId === myId) || matchData.players[0];
-    const oppInfo = matchData.players.find(p => p.socketId !== myId) || matchData.players[1];
+    const myPlayerNum = this.network.playerNumber;
 
-    this.player.spawnAt(myInfo.spawn, myInfo.playerNumber);
+    let myInfo = null;
+    let oppInfo = null;
+
+    if (myId && matchData.players) {
+      myInfo = matchData.players.find(p => (p.socketId && p.socketId === myId) || (p.id && p.id === myId));
+      oppInfo = matchData.players.find(p => (p.socketId && p.socketId !== myId) || (p.id && p.id !== myId));
+    }
+    if (!myInfo && myPlayerNum && matchData.players) {
+      myInfo = matchData.players.find(p => (p.playerNumber && p.playerNumber === myPlayerNum) || (p.num && p.num === myPlayerNum));
+      oppInfo = matchData.players.find(p => (p.playerNumber && p.playerNumber !== myPlayerNum) || (p.num && p.num !== myPlayerNum));
+    }
+    if (!myInfo && matchData.players) {
+      myInfo = matchData.players[0];
+      oppInfo = matchData.players[1] || matchData.players[0];
+    }
+
+    const mySpawn = myInfo?.spawn || CONFIG.GAME.SPAWNS[0];
+    const myNum = myInfo?.playerNumber || myInfo?.num || myPlayerNum || 1;
+    this.player.playerNumber = myNum;
+    this.player.spawnAt(mySpawn, myNum);
+
+    const oppId = oppInfo?.socketId || oppInfo?.id || 'opponent_player';
+    const oppNum = oppInfo?.playerNumber || oppInfo?.num || (myNum === 1 ? 2 : 1);
+    const oppName = oppInfo?.name || 'Opponent';
+    const oppSpawn = oppInfo?.spawn || CONFIG.GAME.SPAWNS[1];
 
     this.opponent = new OpponentCharacter(
       this.scene,
       this.shadowGenerator,
-      oppInfo.socketId,
-      oppInfo.playerNumber,
+      oppId,
+      oppNum,
       false,
-      oppInfo.name || 'Opponent'
+      oppName
     );
 
     if (this.xrayEffect) {
       this.xrayEffect.attachSkeleton(this.opponent);
     }
 
-    this.opponent.setPositionAndRotation(oppInfo.spawn, oppInfo.spawn.rotY);
+    this.opponent.setPositionAndRotation(oppSpawn, oppSpawn.rotY !== undefined ? oppSpawn.rotY : Math.PI);
     this.opponent.setVisible(true);
     this.opponent.setServerClockOffset(this.network.serverClockOffset);
     if (this.isShowingClientHitboxes) {
       this.opponent.setHitboxesWireframe(true);
     }
 
+    // Launch background 30 Hz send loop (dedicated Web Worker, immune to tab focus loss)
+    this.network.startSendLoop(() => {
+      if (this.mode === GAME_MODE.ONLINE && this.player) {
+        return this.player.getCompactNetworkState(this.network.getEstimatedServerTime());
+      }
+      return null;
+    });
+
     this.weapon.resetAmmo();
     this.ui.updateHealth(CONFIG.GAME.MAX_HEALTH);
-    this.ui.updateScore(0, 0, 'YOU', oppInfo.name ? oppInfo.name.toUpperCase() : 'OPPONENT');
+    this.ui.updateScore(0, 0, 'YOU', oppName.toUpperCase());
     this.ui.updateKillCounter(0, CONFIG.GAME.SCORE_TO_WIN);
     this.ui.showHUD();
     this.ui.startMatchTimer();

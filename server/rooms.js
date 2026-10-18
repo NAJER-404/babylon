@@ -249,6 +249,14 @@ export class RoomManager {
         room.startTime = Date.now();
         room.lastActivity = Date.now();
 
+        // Reset player timing and history on match start to prevent speed check false positives
+        for (const p of room.playerList) {
+          p.lastActiveTime = Date.now();
+          p._lastMovementCheckTime = Date.now();
+          p.positionHistory = [];
+          p._hasLoggedStall = false;
+        }
+
         this.io.to(room.code).emit('match_start', {
           ...matchInfo,
           serverTimestamp: Date.now()
@@ -265,52 +273,76 @@ export class RoomManager {
     if (!room) return;
 
     const player = room.players.get(socketId);
-    if (!player || !player.isAlive) return;
+    if (!player) return;
 
     const now = Date.now();
     room.lastActivity = now;
+    player.lastActiveTime = now;
+    player._hasLoggedStall = false;
+    player.lastClientTimestamp = data.t || data.timestamp || now;
+
+    // Even if player is dead/spectating, keeping lastActiveTime refreshed serves as heartbeat
+    if (!player.isAlive) return;
 
     // Unpack compact or standard payload (Part 1)
-    let newX, newY, newZ, newRx, newRy, activeWep, isScoped, isCrouching, isSprinting;
+    let newX, newY, newZ, newVx, newVy, newVz, newRx, newRy, activeWep, isScoped, isCrouching, isSprinting;
 
     if (data.x !== undefined) {
-      // Compact payload: { x, y, z, rx, ry, w, s, c, sp, t }
+      // Compact payload: { x, y, z, vx, vy, vz, rx, ry, w, s, c, sp, t }
       newX = Number(data.x);
       newY = Number(data.y);
       newZ = Number(data.z);
+      newVx = Number(data.vx || 0);
+      newVy = Number(data.vy || 0);
+      newVz = Number(data.vz || 0);
       newRx = Number(data.rx || 0);
       newRy = Number(data.ry || 0);
-      activeWep = data.w === 1 ? 'knife' : 'sniper';
+      activeWep = (data.w === 1 || data.w === 'knife') ? 'knife' : 'sniper';
       isScoped = !!data.s;
       isCrouching = !!data.c;
       isSprinting = !!data.sp;
     } else {
       // Standard payload
-      newX = data.position?.x ?? player.position.x;
-      newY = data.position?.y ?? player.position.y;
-      newZ = data.position?.z ?? player.position.z;
-      newRx = data.rotation?.x ?? player.rotation.x;
-      newRy = data.rotation?.y ?? player.rotation.y;
+      newX = Number(data.position?.x ?? player.position.x);
+      newY = Number(data.position?.y ?? player.position.y);
+      newZ = Number(data.position?.z ?? player.position.z);
+      newVx = Number(data.velocity?.x ?? player.velocity?.x ?? 0);
+      newVy = Number(data.velocity?.y ?? player.velocity?.y ?? 0);
+      newVz = Number(data.velocity?.z ?? player.velocity?.z ?? 0);
+      newRx = Number(data.rotation?.x ?? player.rotation.x);
+      newRy = Number(data.rotation?.y ?? player.rotation.y);
       activeWep = data.activeWeapon || player.activeWeapon;
       isScoped = !!data.isScoped;
       isCrouching = !!data.isCrouching;
       isSprinting = !!data.isSprinting;
     }
 
+    // Number validation: strictly require finite numbers
+    if (!Number.isFinite(newX) || !Number.isFinite(newY) || !Number.isFinite(newZ)) {
+      return;
+    }
+
+    // Clamp coordinates strictly within map arena boundaries [-78, 78] on X/Z and [0.2, 30] on Y
+    newX = Math.max(-78, Math.min(78, newX));
+    newY = Math.max(0.2, Math.min(30, newY));
+    newZ = Math.max(-78, Math.min(78, newZ));
+
     // Kinematic speed validation (Part 4)
     // Knife sprint is 12.5 u/s; Sniper sprint is 7.5 u/s.
-    // Allow +25% tolerance plus 2.5 u/s latency jitter allowance.
+    // Allow +35% tolerance plus 3.0 u/s latency jitter allowance.
     const baseSprintSpeed = activeWep === 'knife' ? 12.5 : 7.5;
-    const maxAllowedSpeed = baseSprintSpeed * 1.25 + 2.5;
+    const maxAllowedSpeed = baseSprintSpeed * 1.35 + 3.0;
 
-    const dt = Math.max(0.016, (now - player.lastActiveTime) / 1000);
+    const dt = Math.max(0.016, (now - (player._lastMovementCheckTime || now)) / 1000);
+    player._lastMovementCheckTime = now;
     const distMoved = Math.hypot(newX - player.position.x, newZ - player.position.z);
     const maxAllowedDist = maxAllowedSpeed * dt;
 
-    // Only correct (snap back) when error exceeds large threshold (2.0 units)
-    if (distMoved > maxAllowedDist + 2.0 && distMoved > 3.0) {
+    // Only correct (snap back) when error exceeds large threshold (prevent false rubber-banding)
+    if (distMoved > maxAllowedDist + 3.0 && distMoved > 6.0) {
       // Large teleport/desync detected: send position correction to client
       this.io.to(socketId).volatile.emit('position_correction', {
+        position: { ...player.position },
         x: player.position.x,
         y: player.position.y,
         z: player.position.z
@@ -322,14 +354,13 @@ export class RoomManager {
     player.position.x = newX;
     player.position.y = newY;
     player.position.z = newZ;
+    player.velocity = { x: newVx, y: newVy, z: newVz };
     player.rotation.x = newRx;
     player.rotation.y = newRy;
     player.activeWeapon = activeWep;
     player.isScoped = isScoped;
     player.isCrouching = isCrouching;
     player.isSprinting = isSprinting;
-    player.lastActiveTime = now;
-    player.lastClientTimestamp = data.t || data.timestamp || now;
   }
 
   switchWeapon(socketId, weaponId) {
@@ -683,6 +714,9 @@ export class RoomManager {
       victim.isAlive = true;
       victim.isProtected = true;
       victim.protectedUntil = Date.now() + SPAWN_PROTECTION_MS;
+      victim.lastActiveTime = Date.now();
+      victim._lastMovementCheckTime = Date.now();
+      victim.positionHistory = [];
 
       this.io.to(room.code).emit('player_respawned', {
         socketId: victim.socketId,
@@ -920,10 +954,22 @@ export class RoomManager {
       const debugHitboxData = [];
 
       for (const p of room.playerList) {
+        // Diagnostic stall warning: log when a client stops sending updates during active play
+        if (room.status === 'playing' && p.isAlive) {
+          const timeSinceUpdate = now - (p.lastActiveTime || now);
+          if (timeSinceUpdate > 2500 && !p._hasLoggedStall) {
+            p._hasLoggedStall = true;
+            console.warn(`[DEBUG NET] Client updates stalled for player "${p.name}" (${p.socketId}) in room ${code} (${timeSinceUpdate}ms since last packet)`);
+          } else if (timeSinceUpdate < 1000) {
+            p._hasLoggedStall = false;
+          }
+        }
+
         // Record snapshot in player's history ring buffer (Part 2)
         p.positionHistory.push({
           timestamp: now,
           position: { x: p.position.x, y: p.position.y, z: p.position.z },
+          velocity: { ...(p.velocity || { x: 0, y: 0, z: 0 }) },
           rotation: { x: p.rotation.x, y: p.rotation.y },
           isCrouching: p.isCrouching,
           isAlive: p.isAlive,
@@ -933,23 +979,52 @@ export class RoomManager {
           p.positionHistory.shift();
         }
 
-        // Compact serialized player record:
-        // [socketId, playerNumber, name, x, y, z, rotX, rotY, weaponId, isScoped, isCrouching, health, isAlive, isProtected]
+        const posX = Math.round(p.position.x * 100) / 100;
+        const posY = Math.round(p.position.y * 100) / 100;
+        const posZ = Math.round(p.position.z * 100) / 100;
+        const vx = Math.round((p.velocity?.x || 0) * 100) / 100;
+        const vy = Math.round((p.velocity?.y || 0) * 100) / 100;
+        const vz = Math.round((p.velocity?.z || 0) * 100) / 100;
+        const rx = Math.round(p.rotation.x * 100) / 100;
+        const ry = Math.round(p.rotation.y * 100) / 100;
+
+        // Comprehensive serialized player record (supports both compact and verbose client keys):
         playersData.push({
           id: p.socketId,
+          socketId: p.socketId,
           num: p.playerNumber,
+          playerNumber: p.playerNumber,
           name: p.name,
-          x: Math.round(p.position.x * 100) / 100,
-          y: Math.round(p.position.y * 100) / 100,
-          z: Math.round(p.position.z * 100) / 100,
-          rx: Math.round(p.rotation.x * 100) / 100,
-          ry: Math.round(p.rotation.y * 100) / 100,
+          x: posX,
+          y: posY,
+          z: posZ,
+          position: { x: posX, y: posY, z: posZ },
+          p: [posX, posY, posZ],
+          vx,
+          vy,
+          vz,
+          velocity: { x: vx, y: vy, z: vz },
+          v: [vx, vy, vz],
+          rx,
+          ry,
+          rotation: { x: rx, y: ry },
+          r: [rx, ry],
           w: p.activeWeapon,
+          activeWeapon: p.activeWeapon,
           s: p.isScoped ? 1 : 0,
+          isScoped: !!p.isScoped,
           c: p.isCrouching ? 1 : 0,
+          isCrouching: !!p.isCrouching,
+          sp: p.isSprinting ? 1 : 0,
+          isSprinting: !!p.isSprinting,
           hp: p.health,
+          health: p.health,
           a: p.isAlive ? 1 : 0,
-          pr: (p.isProtected && now < p.protectedUntil) ? 1 : 0
+          isAlive: !!p.isAlive,
+          pr: (p.isProtected && now < p.protectedUntil) ? 1 : 0,
+          isProtected: !!(p.isProtected && now < p.protectedUntil),
+          t: p.lastClientTimestamp || now,
+          timestamp: p.lastClientTimestamp || now
         });
 
         // Debug hitbox coordinates
