@@ -1,4 +1,4 @@
-// Server-side Room, Player & Combat Lifecycle Manager
+// Server-side Room, Player & Combat Lifecycle Manager for Babylon 1v1 Arena FPS
 const SPAWN_POINTS = [
   { x: -62, y: 1.2, z: -62, rotY: Math.PI / 4 },
   { x: 62, y: 1.2, z: 62, rotY: (5 * Math.PI) / 4 },
@@ -12,7 +12,7 @@ const HEAD_DAMAGE = 200;
 const LEG_DAMAGE = 80;
 const MELEE_DAMAGE = 100;
 const MELEE_MAX_DISTANCE = 2.7;
-const KILL_CAM_DURATION_MS = 6000;
+const KILL_CAM_DURATION_MS = 6000; // 6 seconds
 const RESPAWN_DELAY_AFTER_KILLCAM_MS = 1200;
 const SPAWN_PROTECTION_MS = 2000;
 const ROOM_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
@@ -392,9 +392,11 @@ export class RoomManager {
       this.io.to(room.code).emit('kill_cam', {
         killId, serverTimestamp, durationMs: KILL_CAM_DURATION_MS,
         shooterId: shooter.socketId, shooterNumber: shooter.playerNumber, shooterName: shooter.name,
-        shooterPos: { ...shooter.position }, shooterRot: { ...shooter.rotation },
+        shooterPos: shootData.origin || { ...shooter.position }, // <--- FIX: Bullet starts at exact gun/camera position
+        shooterRot: { ...shooter.rotation },
         victimId: target.socketId, victimNumber: target.playerNumber, victimName: target.name,
-        victimPos: rewoundVictimState?.position || { ...target.position }, victimRot: rewoundVictimState?.rotation || { ...target.rotation },
+        victimPos: rewoundVictimState?.position || { ...target.position }, // <--- FIX: Exact rewound victim position
+        victimRot: rewoundVictimState?.rotation || { ...target.rotation },
         hitPoint, hitPart, weaponType, isHeadshot: hitPart === 'head'
       });
 
@@ -491,24 +493,20 @@ export class RoomManager {
     }
   }
 
-  // --- FIXED: MUCH LARGER SERVER HITBOXES ---
   checkHit(origin, direction, targetPos, isCrouching = false) {
     const len = Math.hypot(direction.x, direction.y, direction.z);
     if (len === 0) return { hit: false };
     const dx = direction.x / len; const dy = direction.y / len; const dz = direction.z / len;
     const dir = { x: dx, y: dy, z: dz };
 
-    // Head: Expanded radius from 0.45 to 0.65
     const headY = targetPos.y + (isCrouching ? 1.35 : 1.95);
     const headCenter = { x: targetPos.x, y: headY, z: targetPos.z };
     const headHit = this.intersectRaySphere(origin, dir, headCenter, 0.65);
 
-    // Torso: Expanded radius from 0.60 to 0.90, expanded Y bounds
     const bodyMinY = targetPos.y + (isCrouching ? 0.40 : 0.75);
     const bodyMaxY = targetPos.y + (isCrouching ? 1.40 : 1.75);
     const bodyHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, bodyMinY, bodyMaxY, 0.90);
 
-    // Legs
     const legsMinY = targetPos.y + 0.05;
     const legsMaxY = targetPos.y + (isCrouching ? 0.40 : 0.75);
     const legsHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, legsMinY, legsMaxY, 0.65);

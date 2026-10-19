@@ -89,7 +89,7 @@ export class Game {
     this.scopeOverlay = null;
     this.xrayEffect = null;
     this.bloodEffect = null;
-    this.killCamVictimBody = null; // <-- NEW: Used for victim's 3D ragdoll body
+    this.killCamVictimBody = null;
     
     // Safety net & debug state (Step 1 & 2)
     this.isRenderLoopRunning = false;
@@ -119,7 +119,6 @@ export class Game {
       }
       this.engine.setHardwareScalingLevel(1.0);
 
-      // WebGL Context Lost & Restored observers (Step 1 item 10)
       if (this.engine.onContextLostObservable) {
         this.engine.onContextLostObservable.add(() => {
           console.error('[Engine] WebGL Context Lost!');
@@ -199,7 +198,6 @@ export class Game {
           inputManager.clearAll();
           if (this.scopeOverlay) this.scopeOverlay.forceReset();
           if (this.mode === GAME_MODE.ONLINE) {
-            // Section F: Never pause online matches on focus loss
             this.ui.showResumeBanner();
           } else if (this.mode === GAME_MODE.PRACTICE && !this.ui.isMenuOpen) {
             this.ui.showPauseMenu();
@@ -212,14 +210,12 @@ export class Game {
         }
       };
 
-      // Click resume banner to regain pointer lock in online matches (Section F)
       document.getElementById('resume-banner')?.addEventListener('click', () => {
         if (this.mode === GAME_MODE.ONLINE && !this.ui.isMenuOpen) {
           this.player.requestPointerLock();
         }
       });
 
-      // Section D: Snap remote character to latest snapshot on tab restore
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden && this.opponent && this.mode === GAME_MODE.ONLINE) {
           this.opponent.snapToLatest();
@@ -467,7 +463,6 @@ export class Game {
       const isVictim = data.victimId === myId;
       const isHeadshot = data.isHeadshot || data.hitPart === 'head';
 
-      // Lock input for both players during replay
       this.player.setInputLocked(true);
       if (this.scopeOverlay) this.scopeOverlay.forceReset();
 
@@ -487,17 +482,18 @@ export class Game {
       };
 
       if (isShooter && this.bulletCam && this.opponent) {
-        // Shooter perspective: bullet follow / tracking
         this.bulletCam.start('shooter', startVec, hitVec, this.opponent, isHeadshot, killInfo, () => {});
       } else if (isVictim && this.bulletCam) {
-        // Victim perspective: cinematic incoming view
         this.player.die();
         
-        // --- FIX: Spawn a dummy humanoid body for the victim so we can see the ragdoll and X-ray ---
         if (this.killCamVictimBody) {
           this.killCamVictimBody.dispose();
         }
-        const myState = this.player.getSendState();
+        
+        // --- FIX: Use server-authoritative positions for the replay! ---
+        const victimPos = data.victimPos || { x: 0, y: 0, z: 0 };
+        const victimYaw = data.victimRot ? data.victimRot.y : 0;
+        
         this.killCamVictimBody = new OpponentCharacter(
           this.scene,
           this.shadowGenerator,
@@ -506,10 +502,8 @@ export class Game {
           false,
           this.player.name || 'You'
         );
-        this.killCamVictimBody.setPositionAndRotation(
-          { x: myState.x, y: myState.y, z: myState.z }, 
-          myState.yaw
-        );
+        
+        this.killCamVictimBody.setPositionAndRotation(victimPos, victimYaw);
         
         if (this.xrayEffect) {
           this.xrayEffect.attachSkeleton(this.killCamVictimBody);
@@ -519,14 +513,12 @@ export class Game {
       }
     };
 
-    // Server announces kill cam concluded: score updates & input unlocked
     this.network.onKillCamEnd = (data) => {
       if (this.bulletCam && this.bulletCam.isActive) {
         this.bulletCam.complete();
       }
       this.player.setInputLocked(false);
       
-      // Cleanup the temporary victim body
       if (this.killCamVictimBody) {
         this.killCamVictimBody.dispose();
         this.killCamVictimBody = null;
@@ -1051,7 +1043,6 @@ export class Game {
         this.opponent.update(scaledDt);
       }
 
-      // Update temporary victim body for kill cam (if active)
       if (this.killCamVictimBody) {
         this.killCamVictimBody.update(scaledDt);
       }

@@ -183,7 +183,7 @@ export class BulletCam {
       this.stateStartTime = performance.now();
 
       this.clearWatchdog();
-      this.watchdogTimerId = setTimeout(() => { this.complete(); }, 6000); // Extended watchdog
+      this.watchdogTimerId = setTimeout(() => { this.complete(); }, 6000);
 
       this.perspective = perspective || 'shooter';
       this.weaponType = killInfo?.weaponType || 'sniper';
@@ -220,7 +220,6 @@ export class BulletCam {
       timeManager.setTimeScale(CONFIG.BULLET_CAM.SLOW_MO_SCALE, true);
       this.scene.activeCamera = this.bulletCamera;
 
-      // FORCE X-RAY TO BE VISIBLE IMMEDIATELY
       if (this.xray && this.victim) {
         this.xray.enable(this.victim);
       }
@@ -267,8 +266,9 @@ export class BulletCam {
   }
 
   setupVictimCamera() {
+    // Improved cinematic angle: camera is set back and to the side, looking at the impact point
     const sideVec = Vector3.Cross(this.direction, Vector3.Up()).normalize();
-    const camPos = this.hitPoint.add(sideVec.scale(2.4)).add(this.direction.scale(1.6)).add(new Vector3(0, 0.4, 0));
+    const camPos = this.hitPoint.add(sideVec.scale(2.8)).subtract(this.direction.scale(1.2)).add(new Vector3(0, 0.3, 0));
     this.bulletCamera.position.copyFrom(camPos);
     this.bulletCamera.setTarget(this.hitPoint.add(new Vector3(0, 0.1, 0)));
   }
@@ -366,7 +366,6 @@ export class BulletCam {
     this.playingSubPhase = 'IMPACT';
     this.phaseStartTime = performance.now();
     
-    // Increased hit stop duration slightly so you can actually see the blood burst before the camera moves
     timeManager.setHitStop(0.15 * 1000); 
     
     this.shakeIntensity = 0.3;
@@ -380,7 +379,6 @@ export class BulletCam {
     this.bulletRoot.setEnabled(false);
     this.trailMesh.setEnabled(false);
 
-    // SPAWN BLOOD
     if (this.blood && typeof this.blood.spawnBloodBurst === 'function') {
       this.blood.spawnBloodBurst(this.hitPoint, this.direction);
     }
@@ -391,7 +389,6 @@ export class BulletCam {
   }
 
   updateImpact(elapsedSec) {
-    // Wait for the hitstop to finish, keeping the camera locked on the blood/X-Ray
     if (elapsedSec >= 0.15) {
       this.playingSubPhase = 'RAGDOLL';
       this.phaseStartTime = performance.now();
@@ -408,7 +405,6 @@ export class BulletCam {
     this.bulletCamera.position.set(camX, camY, camZ);
     this.bulletCamera.setTarget(this.hitPoint.add(new Vector3(0, -elapsedSec * 0.3, 0)));
 
-    // Wait longer (3 seconds) during the ragdoll fall to admire the X-Ray
     if (elapsedSec >= 3.0) {
       this.startEnding();
     }
