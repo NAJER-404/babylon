@@ -390,7 +390,7 @@ export class OpponentCharacter {
     rightBoot.isPickable = false;
 
     // ==========================================
-    // 6. HITBOXES (Head, Body, Legs)
+    // 6. HITBOXES (Head, Torso, Legs)
     // ==========================================
     this.headHitbox = MeshBuilder.CreateSphere(
       `hitbox_head_${this.id}`,
@@ -404,13 +404,13 @@ export class OpponentCharacter {
     this.headHitbox.isPickable = true;
     this.headHitbox.metadata = {
       isHitbox: true,
-      hitPart: 'head',
+      hitPart: 'head', // <--- MATCHES WEAPON.JS
       targetId: this.id,
       targetType: this.isBot ? 'bot' : 'player'
     };
 
     this.bodyHitbox = MeshBuilder.CreateBox(
-      `hitbox_body_${this.id}`,
+      `hitbox_torso_${this.id}`, // Renamed for clarity
       { width: 0.70, height: 0.90, depth: 0.40 },
       this.scene
     );
@@ -421,7 +421,7 @@ export class OpponentCharacter {
     this.bodyHitbox.isPickable = true;
     this.bodyHitbox.metadata = {
       isHitbox: true,
-      hitPart: 'body',
+      hitPart: 'torso', // <--- UPDATED FROM 'body' TO 'torso'
       targetId: this.id,
       targetType: this.isBot ? 'bot' : 'player'
     };
@@ -438,7 +438,7 @@ export class OpponentCharacter {
     this.legsHitbox.isPickable = true;
     this.legsHitbox.metadata = {
       isHitbox: true,
-      hitPart: 'legs',
+      hitPart: 'legs', // <--- MATCHES WEAPON.JS
       targetId: this.id,
       targetType: this.isBot ? 'bot' : 'player'
     };

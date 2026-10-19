@@ -882,7 +882,13 @@ export class Game {
         origin: result.rayOrigin || { x: this.player.camera.position.x, y: this.player.camera.position.y, z: this.player.camera.position.z },
         direction: result.rayDirection || { x: this.player.camera.getForwardRay().direction.x, y: this.player.camera.getForwardRay().direction.y, z: this.player.camera.getForwardRay().direction.z },
         weaponType: result.weaponType,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        // --- NEW: Pass hit info to the server for human players ---
+        hit: result.hit || false,
+        hitPart: result.hitPart || 'torso',
+        hitPoint: result.hitPoint ? { x: result.hitPoint.x, y: result.hitPoint.y, z: result.hitPoint.z } : null,
+        targetType: result.targetType
+        // -------------------------------------------------------------
       });
     }
   }
@@ -947,7 +953,8 @@ export class Game {
       this.serverHitboxMat.disableLighting = true;
     }
 
-    ['head', 'body', 'legs'].forEach(part => {
+    // Updated to match standard part names if needed (e.g., 'torso' instead of 'body')
+    ['head', 'torso', 'body', 'legs'].forEach(part => {
       const partData = data[part];
       if (!partData) return;
 

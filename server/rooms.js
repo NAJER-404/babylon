@@ -498,13 +498,10 @@ export class RoomManager {
     }
 
     // 6. LAG COMPENSATION REWIND (Part 2)
-    // Rewind target to the time the shooter actually saw:
-    // shotTime = clientEstimatedServerTime minus remote interpolation delay (~120ms)
     const clientEst = Number(shootData.estimatedServerTime || shootData.timestamp || (now - 120));
     const targetShotTime = Math.max(now - MAX_REWIND_MS, Math.min(now, clientEst - 100));
     const rewindMs = Math.max(0, now - targetShotTime);
 
-    // Sample rewound position and crouch state from target's positionHistory ring buffer
     const rewound = this.samplePlayerHistory(target, targetShotTime);
     const targetPos = rewound.position;
     const isCrouching = rewound.isCrouching;
@@ -519,7 +516,7 @@ export class RoomManager {
 
       if (dist <= MELEE_MAX_DISTANCE) {
         // Lethal knife hit confirmed
-        this.logShot(shooter, shotId, rewindMs, dist, true, 'body', '');
+        this.logShot(shooter, shotId, rewindMs, dist, true, 'torso', '');
         const hitPoint = {
           x: targetPos.x,
           y: targetPos.y + 1.2,
@@ -531,7 +528,7 @@ export class RoomManager {
           shooter,
           target,
           MELEE_DAMAGE,
-          'body',
+          'torso', // Updated from 'body'
           hitPoint,
           'knife',
           shootData,
@@ -554,21 +551,28 @@ export class RoomManager {
     const distToTarget = Math.hypot(origin.x - targetPos.x, origin.z - targetPos.z);
 
     if (hitResult.hit) {
+      // Trust the client's exact mesh hit part (head/torso/legs) since it raycasts against 3D models,
+      // but rely on the server's math to confirm that a hit actually occurred.
+      let finalPart = hitResult.part; 
+      if (shootData.hitPart === 'head' || shootData.hitPart === 'torso' || shootData.hitPart === 'legs') {
+        finalPart = shootData.hitPart; 
+      }
+
       let damage = BODY_DAMAGE;
-      if (hitResult.part === 'head') {
+      if (finalPart === 'head') {
         damage = HEAD_DAMAGE;
-      } else if (hitResult.part === 'legs') {
+      } else if (finalPart === 'legs') {
         damage = LEG_DAMAGE;
       }
 
-      this.logShot(shooter, shotId, rewindMs, distToTarget, true, hitResult.part, '');
+      this.logShot(shooter, shotId, rewindMs, distToTarget, true, finalPart, '');
 
       this.applyDamageAndCheckKill(
         room,
         shooter,
         target,
         damage,
-        hitResult.part,
+        finalPart,
         hitResult.point,
         'sniper',
         shootData,
@@ -925,7 +929,7 @@ export class RoomManager {
 
     let hits = [];
     if (headHit.hit) hits.push({ part: 'head', t: headHit.t, point: headHit.point });
-    if (bodyHit.hit) hits.push({ part: 'body', t: bodyHit.t, point: bodyHit.point });
+    if (bodyHit.hit) hits.push({ part: 'torso', t: bodyHit.t, point: bodyHit.point }); // UPDATED: 'body' to 'torso'
     if (legsHit.hit) hits.push({ part: 'legs', t: legsHit.t, point: legsHit.point });
 
     if (hits.length === 0) return { hit: false };

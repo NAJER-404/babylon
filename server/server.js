@@ -285,6 +285,12 @@ io.on('connection', (socket) => {
   socket.on('player_shoot', (shootData) => {
     if (!checkUpdateRateLimit(socket.id, 20)) return;
     if (!shootData || typeof shootData !== 'object') return;
+    
+    // --- NEW: Log hit part for debugging ---
+    if (shootData.hit && shootData.hitPart) {
+      console.log(`[SERVER] Player ${socket.id} hit: ${shootData.hitPart}`);
+    }
+    
     roomManager.handleShoot(socket.id, shootData);
   });
 

@@ -431,7 +431,9 @@ export class WeaponSystem {
       if (mesh === this.gunRoot || mesh.isDescendantOf(this.gunRoot)) return false;
       if (mesh.name === 'playerCollider' || mesh.metadata?.isLocalPlayer) return false;
       if (mesh.name?.startsWith('tracer_') || mesh.metadata?.isTrigger) return false;
-      return mesh.metadata?.isHitbox;
+      
+      // Only hit valid hitboxes
+      return mesh.metadata?.isHitbox === true;
     });
 
     let hitResult = {
@@ -442,14 +444,15 @@ export class WeaponSystem {
       bodyDamage: CONFIG.WEAPONS.KNIFE.DAMAGE,
       headDamage: CONFIG.WEAPONS.KNIFE.DAMAGE,
       hit: false,
-      hitPart: null,
+      hitPart: 'torso', // Default to torso
       targetMesh: null,
       hitPoint: null
     };
 
     if (hitInfo && hitInfo.hit && hitInfo.pickedMesh?.metadata?.isHitbox) {
       hitResult.hit = true;
-      hitResult.hitPart = hitInfo.pickedMesh.metadata.hitPart || 'body';
+      // The hitbox should have metadata.hitPart set to 'head' or 'torso'
+      hitResult.hitPart = hitInfo.pickedMesh.metadata.hitPart || 'torso'; 
       hitResult.targetId = hitInfo.pickedMesh.metadata.targetId;
       hitResult.targetType = hitInfo.pickedMesh.metadata.targetType;
       hitResult.hitPoint = {
@@ -457,6 +460,8 @@ export class WeaponSystem {
         y: hitInfo.pickedPoint.y,
         z: hitInfo.pickedPoint.z
       };
+
+      console.log(`[WEAPON DEBUG] Knife hit: ${hitResult.hitPart} on target: ${hitResult.targetId}`);
 
       this.audio.playKnifeHit();
       if (this.ui) {
@@ -521,11 +526,14 @@ export class WeaponSystem {
       if (mesh.name === 'playerCollider' || mesh.metadata?.isLocalPlayer) return false;
       if (mesh.name?.startsWith('tracer_') || mesh.metadata?.isTrigger) return false;
       if (mesh.name?.startsWith('nameTag') || mesh.name?.startsWith('soldierShield') || mesh.name?.startsWith('sScopeGlint') || mesh.name?.startsWith('sMuzzle')) return false;
+      
+      // We want to hit Hitboxes OR the environment (walls/floor)
       return !!(mesh.metadata?.isHitbox || mesh.checkCollisions);
     });
 
     const shotId = `shot_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     let endPoint = rayOrigin.add(shotDirection.scale(140));
+    
     let hitResult = {
       shotId,
       fired: true,
@@ -538,7 +546,7 @@ export class WeaponSystem {
       rayOrigin: { x: rayOrigin.x, y: rayOrigin.y, z: rayOrigin.z },
       rayDirection: { x: shotDirection.x, y: shotDirection.y, z: shotDirection.z },
       hit: false,
-      hitPart: null,
+      hitPart: 'torso', // Default fallback
       targetMesh: null,
       hitPoint: null
     };
@@ -548,11 +556,16 @@ export class WeaponSystem {
       hitResult.hitPoint = { x: endPoint.x, y: endPoint.y, z: endPoint.z };
 
       const pickedMesh = hitInfo.pickedMesh;
+      
+      // If we hit a player's hitbox
       if (pickedMesh?.metadata?.isHitbox) {
         hitResult.hit = true;
-        hitResult.hitPart = pickedMesh.metadata.hitPart;
+        // Extract the exact part ('head' or 'torso') from the opponent's hitbox metadata
+        hitResult.hitPart = pickedMesh.metadata.hitPart || 'torso'; 
         hitResult.targetId = pickedMesh.metadata.targetId;
         hitResult.targetType = pickedMesh.metadata.targetType;
+
+        console.log(`[WEAPON DEBUG] Sniper hit: ${hitResult.hitPart} on target: ${hitResult.targetId}`);
 
         // Immediate client hit feedback (prediction)
         if (this.ui) {
@@ -562,6 +575,7 @@ export class WeaponSystem {
           this.audio.playHitmarker(hitResult.hitPart === 'head');
         }
       } else {
+        // We hit a wall or floor, spawn sparks
         this.triggerImpactSparks(endPoint, hitInfo.getNormal(true) || Vector3.Up());
       }
     }
