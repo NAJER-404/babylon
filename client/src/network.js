@@ -274,6 +274,15 @@ export class NetworkManager {
 
     this.socket.on('debug_server_hitboxes', (data) => {
       if (this.onDebugServerHitboxes) this.onDebugServerHitboxes(data);
+      if (this.onServerHitboxes) this.onServerHitboxes(data);
+    });
+
+    this.socket.on('shot_result', (data) => {
+      if (data) {
+        const reasonStr = data.hit ? `HIT (${data.part || '?'}) dist:${data.distance || 0}m` : `MISS: ${data.reason || '?'}`;
+        this.logEvent(`Shot: ${reasonStr}`);
+      }
+      if (this.onShotResult) this.onShotResult(data);
     });
 
     // Section H: App-level ping and pong carrying timestamps with EMA smoothing

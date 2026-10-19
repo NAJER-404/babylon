@@ -96,6 +96,14 @@ export class MapBuilder {
     return Color3.FromHexString(fallback);
   }
 
+  addShadowCaster(mesh) {
+    if (this.shadowGenerator && mesh) {
+      try {
+        this.shadowGenerator.addShadowCaster(mesh);
+      } catch (e) {}
+    }
+  }
+
   createMaterials() {
     // Floor Slate
     this.matFloor = new StandardMaterial('matFloor', this.scene);
@@ -260,7 +268,7 @@ export class MapBuilder {
       wall.material = this.matWall;
       wall.checkCollisions = true;
       wall.receiveShadows = true;
-      this.shadowGenerator.addShadowCaster(wall);
+      this.addShadowCaster(wall);
       this.staticMeshes.push(wall);
       this.coverMeshes.push(wall);
 
@@ -314,7 +322,7 @@ export class MapBuilder {
       tower.material = this.matPlatform;
       tower.checkCollisions = true;
       tower.receiveShadows = true;
-      this.shadowGenerator.addShadowCaster(tower);
+      this.addShadowCaster(tower);
       this.staticMeshes.push(tower);
       this.coverMeshes.push(tower);
 
@@ -329,7 +337,7 @@ export class MapBuilder {
       barrier.material = this.matWall;
       barrier.checkCollisions = true;
       barrier.receiveShadows = true;
-      this.shadowGenerator.addShadowCaster(barrier);
+      this.addShadowCaster(barrier);
       this.staticMeshes.push(barrier);
       this.coverMeshes.push(barrier);
 
@@ -347,7 +355,7 @@ export class MapBuilder {
       ramp.material = this.matPlatform;
       ramp.checkCollisions = true;
       ramp.receiveShadows = true;
-      this.shadowGenerator.addShadowCaster(ramp);
+      this.addShadowCaster(ramp);
       this.staticMeshes.push(ramp);
 
       // Upper shelter canopy
@@ -358,7 +366,7 @@ export class MapBuilder {
       );
       canopy.position.set(cfg.x, cfg.height + 4.2, cfg.z);
       canopy.material = this.matSteel;
-      this.shadowGenerator.addShadowCaster(canopy);
+      this.addShadowCaster(canopy);
       this.staticMeshes.push(canopy);
     });
   }
@@ -380,7 +388,7 @@ export class MapBuilder {
       bunker.material = this.matPlatform;
       bunker.checkCollisions = true;
       bunker.receiveShadows = true;
-      this.shadowGenerator.addShadowCaster(bunker);
+      this.addShadowCaster(bunker);
       this.staticMeshes.push(bunker);
       this.coverMeshes.push(bunker);
 
@@ -412,7 +420,7 @@ export class MapBuilder {
     centerHub.material = this.matPlatform;
     centerHub.checkCollisions = true;
     centerHub.receiveShadows = true;
-    this.shadowGenerator.addShadowCaster(centerHub);
+    this.addShadowCaster(centerHub);
     this.staticMeshes.push(centerHub);
     this.coverMeshes.push(centerHub);
 
@@ -422,7 +430,7 @@ export class MapBuilder {
     spire.material = this.matPillar;
     spire.checkCollisions = true;
     spire.receiveShadows = true;
-    this.shadowGenerator.addShadowCaster(spire);
+    this.addShadowCaster(spire);
     this.staticMeshes.push(spire);
     this.coverMeshes.push(spire);
 
@@ -473,7 +481,7 @@ export class MapBuilder {
       pillar.material = this.matPillar;
       pillar.checkCollisions = true;
       pillar.receiveShadows = true;
-      this.shadowGenerator.addShadowCaster(pillar);
+      this.addShadowCaster(pillar);
       this.staticMeshes.push(pillar);
       this.coverMeshes.push(pillar);
 
@@ -527,7 +535,7 @@ export class MapBuilder {
       crate.material = this.matCrate;
       crate.checkCollisions = true;
       crate.receiveShadows = true;
-      this.shadowGenerator.addShadowCaster(crate);
+      this.addShadowCaster(crate);
       this.staticMeshes.push(crate);
       this.coverMeshes.push(crate);
 
@@ -599,7 +607,7 @@ export class MapBuilder {
     );
     frame.position.set(0, posY, posZ);
     frame.material = this.matSteel;
-    this.shadowGenerator.addShadowCaster(frame);
+    this.addShadowCaster(frame);
     this.staticMeshes.push(frame);
 
     // Glowing Neon Border

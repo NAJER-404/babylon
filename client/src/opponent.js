@@ -394,12 +394,13 @@ export class OpponentCharacter {
     // ==========================================
     this.headHitbox = MeshBuilder.CreateSphere(
       `hitbox_head_${this.id}`,
-      { diameter: 0.65, segments: 8 },
+      { diameter: 0.70, segments: 8 },
       this.scene
     );
     this.headHitbox.parent = this.rootNode;
     this.headHitbox.position.y = 1.95;
-    this.headHitbox.isVisible = false;
+    this.headHitbox.isVisible = true;
+    this.headHitbox.visibility = 0;
     this.headHitbox.isPickable = true;
     this.headHitbox.metadata = {
       isHitbox: true,
@@ -410,12 +411,13 @@ export class OpponentCharacter {
 
     this.bodyHitbox = MeshBuilder.CreateBox(
       `hitbox_body_${this.id}`,
-      { width: 0.95, height: 0.80, depth: 0.60 },
+      { width: 0.70, height: 0.90, depth: 0.40 },
       this.scene
     );
     this.bodyHitbox.parent = this.rootNode;
     this.bodyHitbox.position.y = 1.25;
-    this.bodyHitbox.isVisible = false;
+    this.bodyHitbox.isVisible = true;
+    this.bodyHitbox.visibility = 0;
     this.bodyHitbox.isPickable = true;
     this.bodyHitbox.metadata = {
       isHitbox: true,
@@ -426,12 +428,13 @@ export class OpponentCharacter {
 
     this.legsHitbox = MeshBuilder.CreateBox(
       `hitbox_legs_${this.id}`,
-      { width: 0.85, height: 0.85, depth: 0.55 },
+      { width: 0.60, height: 0.90, depth: 0.40 },
       this.scene
     );
     this.legsHitbox.parent = this.rootNode;
     this.legsHitbox.position.y = 0.45;
-    this.legsHitbox.isVisible = false;
+    this.legsHitbox.isVisible = true;
+    this.legsHitbox.visibility = 0;
     this.legsHitbox.isPickable = true;
     this.legsHitbox.metadata = {
       isHitbox: true,
@@ -679,8 +682,11 @@ export class OpponentCharacter {
       if (visible) {
         m.material = this.debugWireframeMat;
         m.isVisible = true;
+        m.visibility = 1.0;
       } else {
-        m.isVisible = false;
+        m.material = null;
+        m.isVisible = true;
+        m.visibility = 0;
       }
     });
   }
@@ -1115,9 +1121,21 @@ export class OpponentCharacter {
     if (this.rightArm) this.rightArm.isVisible = visible;
     if (this.leftLeg) this.leftLeg.isVisible = visible;
     if (this.rightLeg) this.rightLeg.isVisible = visible;
-    if (this.headHitbox) this.headHitbox.isPickable = visible;
-    if (this.bodyHitbox) this.bodyHitbox.isPickable = visible;
-    if (this.legsHitbox) this.legsHitbox.isPickable = visible;
+    if (this.headHitbox) {
+      this.headHitbox.isPickable = visible;
+      this.headHitbox.isVisible = visible;
+      this.headHitbox.visibility = this.hitboxesWireframeVisible ? 1.0 : 0;
+    }
+    if (this.bodyHitbox) {
+      this.bodyHitbox.isPickable = visible;
+      this.bodyHitbox.isVisible = visible;
+      this.bodyHitbox.visibility = this.hitboxesWireframeVisible ? 1.0 : 0;
+    }
+    if (this.legsHitbox) {
+      this.legsHitbox.isPickable = visible;
+      this.legsHitbox.isVisible = visible;
+      this.legsHitbox.visibility = this.hitboxesWireframeVisible ? 1.0 : 0;
+    }
 
     if (this.nameTagPlane) this.nameTagPlane.isVisible = visible;
 

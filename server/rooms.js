@@ -417,7 +417,7 @@ export class RoomManager {
     if (!player) return;
 
     player.activeWeapon = weaponId === 'knife' ? 'knife' : 'sniper';
-    socket.to(roomCode).emit('opponent_switch_weapon', {
+    this.io.to(roomCode).emit('opponent_switch_weapon', {
       socketId,
       playerNumber: player.playerNumber,
       weaponId: player.activeWeapon
@@ -472,14 +472,18 @@ export class RoomManager {
     }
 
     // 3. Target Alive Check
-    if (!target || !target.isAlive) {
-      this.logShot(shooter, shotId, 0, 0, false, null, 'target dead');
+    if (!target) {
+      this.logShot(shooter, shotId, 0, 0, false, null, 'no_target');
+      return;
+    }
+    if (!target.isAlive) {
+      this.logShot(shooter, shotId, 0, 0, false, null, 'dead');
       return;
     }
 
     // 4. Target Spawn Protection Check
     if (target.isProtected && now < target.protectedUntil) {
-      this.logShot(shooter, shotId, 0, 0, false, null, 'spawn protected');
+      this.logShot(shooter, shotId, 0, 0, false, null, 'protected');
       return;
     } else if (target.isProtected && now >= target.protectedUntil) {
       target.isProtected = false;
@@ -489,7 +493,7 @@ export class RoomManager {
     const origin = shootData.origin || shooter.position;
     const originErr = Math.hypot(origin.x - shooter.position.x, origin.z - shooter.position.z);
     if (originErr > 3.5) {
-      this.logShot(shooter, shotId, 0, originErr, false, null, 'invalid shot');
+      this.logShot(shooter, shotId, 0, originErr, false, null, 'invalid');
       return;
     }
 
@@ -534,7 +538,7 @@ export class RoomManager {
           rewound
         );
       } else {
-        this.logShot(shooter, shotId, rewindMs, dist, false, null, 'out of range');
+        this.logShot(shooter, shotId, rewindMs, dist, false, null, 'out_of_range');
       }
       return;
     }
@@ -542,7 +546,7 @@ export class RoomManager {
     // SNIPER HITSCAN RAYCAST
     const direction = shootData.direction;
     if (!direction) {
-      this.logShot(shooter, shotId, rewindMs, 0, false, null, 'invalid shot');
+      this.logShot(shooter, shotId, rewindMs, 0, false, null, 'invalid');
       return;
     }
 
@@ -575,11 +579,21 @@ export class RoomManager {
     }
   }
 
-  // Server shot diagnostic logging (Part 0)
+  // Server shot diagnostic logging & client notification (Part 0)
   logShot(shooter, shotId, rewindMs, dist, hit, part, reason = '') {
     const shooterShort = (shooter.socketId || 'unknown').slice(0, 8);
     const resultStr = hit ? `HIT [${part}]` : `MISS ["${reason}"]`;
     console.log(`[SHOT LOG] shooter: ${shooterShort}, shotId: ${shotId}, rewind: ${Math.round(rewindMs)}ms, dist: ${dist.toFixed(1)}m, result: ${resultStr}`);
+    if (shooter.socketId) {
+      this.io.to(shooter.socketId).emit('shot_result', {
+        shotId,
+        hit,
+        part: part || null,
+        reason: hit ? `HIT (${part})` : reason,
+        rewindMs: Math.round(rewindMs),
+        distance: Math.round(dist)
+      });
+    }
   }
 
   // Sample target position & crouch state from history buffer

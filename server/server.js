@@ -81,8 +81,29 @@ app.post('/api/client-log', (req, res) => {
 const clientDistPath = path.resolve(__dirname, '../client/dist');
 if (fs.existsSync(clientDistPath)) {
   console.log(`[Static Host] Serving production client from: ${clientDistPath}`);
-  app.use(express.static(clientDistPath));
+
+  // Hashed Vite production assets are cached for 1 year
+  app.use('/assets', express.static(path.join(clientDistPath, 'assets'), {
+    maxAge: '1y',
+    immutable: true
+  }));
+
+  // Non-hashed files (index.html, manifest, icons) with no-cache on HTML
+  app.use(express.static(clientDistPath, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }
+  }));
+
+  // SPA fallback: index.html is NEVER cached so updates apply immediately on refresh
   app.get('*', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 } else {

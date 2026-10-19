@@ -94,6 +94,7 @@ export class UIManager {
       canvasSize: document.getElementById('debug-canvas-size'),
       webgl: document.getElementById('debug-webgl'),
       lastError: document.getElementById('debug-last-error'),
+      lastShot: document.getElementById('debug-last-shot'),
       clientHitboxBtn: document.getElementById('btn-toggle-client-hitboxes'),
       serverHitboxBtn: document.getElementById('btn-toggle-server-hitboxes'),
       simLatencySelect: document.getElementById('select-debug-latency'),
@@ -525,6 +526,11 @@ export class UIManager {
     if (this.debug.lastError) {
       this.debug.lastError.textContent = data.lastError || 'None';
       this.debug.lastError.style.color = (data.lastError && data.lastError !== 'None') ? '#ef4444' : '#4ade80';
+    }
+    if (this.debug.lastShot && data.lastShot !== undefined) {
+      this.debug.lastShot.textContent = data.lastShot || '--';
+      const isHit = typeof data.lastShot === 'string' && data.lastShot.startsWith('HIT');
+      this.debug.lastShot.style.color = isHit ? '#4ade80' : (data.lastShot && data.lastShot !== '--' ? '#f59e0b' : '#94a3b8');
     }
     if (this.debug.eventsList && Array.isArray(data.events)) {
       if (data.events.length === 0) {

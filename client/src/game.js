@@ -92,6 +92,7 @@ export class Game {
     // Safety net & debug state (Step 1 & 2)
     this.isRenderLoopRunning = false;
     this.lastRenderError = 'None';
+    this.lastShotReason = '--';
     this.safetyWatchdogTimer = null;
 
     this.init();
@@ -517,6 +518,7 @@ export class Game {
       }
 
       this.ui.updateScore(this.playerScore, this.enemyScore, 'YOU', this.opponent?.name || 'OPPONENT');
+      this.ui.updateKillCounter(this.playerScore, CONFIG.GAME.SCORE_TO_WIN);
     };
 
     this.network.onPlayerKilled = (data) => {
@@ -590,6 +592,15 @@ export class Game {
 
     this.network.onPingUpdate = (ping) => {
       this.ui.updatePing(ping);
+    };
+
+    // Shot result from server (Part 0 debug overlay)
+    this.network.onShotResult = (data) => {
+      if (data) {
+        this.lastShotReason = data.hit
+          ? `HIT (${data.part || '?'}) dist:${data.distance || 0}m rewind:${data.rewindMs || 0}ms`
+          : `MISS: ${data.reason || '?'}`;
+      }
     };
   }
 
@@ -1069,7 +1080,8 @@ export class Game {
           renderLoop: this.isRenderLoopRunning ? 'RUNNING' : 'STOPPED',
           canvasSize: `${this.canvas.width} x ${this.canvas.height}`,
           webgl: glRenderer,
-          lastError: this.lastRenderError || 'None'
+          lastError: this.lastRenderError || 'None',
+          lastShot: this.lastShotReason || '--'
         });
         this.ui.updatePing(this.network.smoothedPing, this.network.jitter);
       }

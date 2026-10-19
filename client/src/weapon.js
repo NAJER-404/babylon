@@ -520,7 +520,8 @@ export class WeaponSystem {
       if (mesh === this.gunRoot || mesh.isDescendantOf(this.gunRoot)) return false;
       if (mesh.name === 'playerCollider' || mesh.metadata?.isLocalPlayer) return false;
       if (mesh.name?.startsWith('tracer_') || mesh.metadata?.isTrigger) return false;
-      return mesh.metadata?.isHitbox || mesh.checkCollisions;
+      if (mesh.name?.startsWith('nameTag') || mesh.name?.startsWith('soldierShield') || mesh.name?.startsWith('sScopeGlint') || mesh.name?.startsWith('sMuzzle')) return false;
+      return !!(mesh.metadata?.isHitbox || mesh.checkCollisions);
     });
 
     const shotId = `shot_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
