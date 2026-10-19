@@ -75,6 +75,11 @@ export class NetworkManager {
     this.onDebugServerHitboxes = null;
     this.onDisconnect = null;
 
+    // --- NEW: Matchmaking Callbacks ---
+    this.onMatchFound = null;
+    this.onMatchmakingStatus = null;
+    this.onMatchmakingCancelled = null;
+
     this.startPacketRateMonitor();
   }
 
@@ -175,6 +180,23 @@ export class NetworkManager {
         this.onDisconnect(data?.message || 'Server restarting. Returning to menu...');
       }
     });
+
+    // --- NEW: Matchmaking Listeners ---
+    this.socket.on('matchmaking_status', (data) => {
+      if (this.onMatchmakingStatus) this.onMatchmakingStatus(data);
+    });
+
+    this.socket.on('match_found', (data) => {
+      this.roomCode = data.roomCode;
+      this.playerNumber = data.playerNumber;
+      this.playerName = data.playerName;
+      if (this.onMatchFound) this.onMatchFound(data);
+    });
+
+    this.socket.on('matchmaking_cancelled', () => {
+      if (this.onMatchmakingCancelled) this.onMatchmakingCancelled();
+    });
+    // -----------------------------------
 
     // Helper to receive with simulated lag / loss
     const receiveWithSim = (callback, eventName) => (data) => {
@@ -373,6 +395,23 @@ export class NetworkManager {
   getEstimatedServerTime() {
     return Date.now() + this.serverClockOffset;
   }
+
+  // --- NEW: Matchmaking Methods ---
+  findMatch(playerName) {
+    if (!this.socket || !this.socket.connected) {
+      this.connect();
+    }
+    this.packetsOutCounter++;
+    this.socket.emit('find_match', { playerName });
+  }
+
+  cancelFindMatch() {
+    if (this.socket && this.socket.connected) {
+      this.packetsOutCounter++;
+      this.socket.emit('cancel_find_match');
+    }
+  }
+  // --------------------------------
 
   createRoom(playerName) {
     return new Promise((resolve, reject) => {

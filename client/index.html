@@ -192,11 +192,16 @@
           <input type="text" id="input-player-name" class="input-text" placeholder="PLAYER NAME" maxlength="12" value="Player 1" autocomplete="off" />
         </div>
 
-        <div class="btn-group" style="margin-top: 14px;">
-          <button id="btn-create-room" class="btn-primary">CREATE NEW ROOM</button>
+        <!-- NEW: MATCHMAKING -->
+        <button id="btn-find-match" class="btn-primary" style="margin-top: 14px; margin-bottom: 14px;">FIND MATCH</button>
+        <div id="matchmaking-status" class="pulse-text hidden" style="margin-bottom: 14px; color: #00f2fe;">SEARCHING FOR OPPONENT...</div>
+        <button id="btn-cancel-find-match" class="btn-danger hidden" style="margin-bottom: 14px;">CANCEL SEARCH</button>
+        <!-- ---------------------- -->
 
-          <div class="divider-text">— OR JOIN BY 4-LETTER CODE —</div>
+        <div class="divider-text">— OR PLAY WITH A FRIEND —</div>
 
+        <div class="btn-group">
+          <button id="btn-create-room" class="btn-secondary">CREATE NEW ROOM</button>
           <div class="join-row">
             <input type="text" id="input-room-code" class="input-text code-input" placeholder="CODE" maxlength="4" style="text-transform: uppercase;" autocomplete="off" />
             <button id="btn-join-room" class="btn-secondary join-btn" disabled>JOIN</button>

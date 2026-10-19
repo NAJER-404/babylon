@@ -119,6 +119,7 @@ export class Game {
       }
       this.engine.setHardwareScalingLevel(1.0);
 
+      // WebGL Context Lost & Restored observers (Step 1 item 10)
       if (this.engine.onContextLostObservable) {
         this.engine.onContextLostObservable.add(() => {
           console.error('[Engine] WebGL Context Lost!');
@@ -198,6 +199,7 @@ export class Game {
           inputManager.clearAll();
           if (this.scopeOverlay) this.scopeOverlay.forceReset();
           if (this.mode === GAME_MODE.ONLINE) {
+            // Section F: Never pause online matches on focus loss
             this.ui.showResumeBanner();
           } else if (this.mode === GAME_MODE.PRACTICE && !this.ui.isMenuOpen) {
             this.ui.showPauseMenu();
@@ -210,12 +212,14 @@ export class Game {
         }
       };
 
+      // Click resume banner to regain pointer lock in online matches (Section F)
       document.getElementById('resume-banner')?.addEventListener('click', () => {
         if (this.mode === GAME_MODE.ONLINE && !this.ui.isMenuOpen) {
           this.player.requestPointerLock();
         }
       });
 
+      // Section D: Snap remote character to latest snapshot on tab restore
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden && this.opponent && this.mode === GAME_MODE.ONLINE) {
           this.opponent.snapToLatest();
@@ -296,6 +300,17 @@ export class Game {
       onOpenOnlineModal: () => {
         this.network.connect();
       },
+
+      // --- NEW: Matchmaking UI Callbacks ---
+      onFindMatch: (playerName) => {
+        this.network.connect();
+        this.network.findMatch(playerName);
+      },
+
+      onCancelFindMatch: () => {
+        this.network.cancelFindMatch();
+      },
+      // ------------------------------------
 
       onCreateRoom: async (playerName) => {
         try {
@@ -389,12 +404,33 @@ export class Game {
       this.ui.updateConnectionStatus(status);
     };
 
+    // --- NEW: Matchmaking Network Callbacks ---
+    this.network.onMatchmakingStatus = (data) => {
+      if (data.status === 'searching') {
+        this.ui.showMatchmakingState(true);
+      }
+    };
+
+    this.network.onMatchFound = (data) => {
+      // The server automatically creates the room, joins the player, and starts the countdown.
+      // We just need to hide the matchmaking UI and wait for the countdown overlay.
+      this.ui.showMatchmakingState(false);
+      this.ui.hideAllModals();
+    };
+
+    this.network.onMatchmakingCancelled = () => {
+      this.ui.showMatchmakingState(false);
+    };
+    // --------------------------------------------
+
+    // 3-2-1 Synchronized Countdown sequence
     this.network.onMatchCountdown = (data) => {
       const p1 = data.players?.[0]?.name || 'Player 1';
       const p2 = data.players?.[1]?.name || 'Player 2';
       this.ui.showCountdown(data.count, p1, p2);
     };
 
+    // Both players released at 0
     this.network.onMatchStart = (data) => {
       this.ui.hideCountdown();
       this.startOnlineMatch(data);
@@ -409,6 +445,7 @@ export class Game {
       for (const p of data.players) {
         const pId = p.id || p.socketId;
 
+        // Section A: Snapshot for remoteId goes ONLY to remote opponent; localId goes ONLY to local player
         if (remoteId && pId === remoteId && this.opponent) {
           this.opponent.setServerClockOffset(this.network.serverClockOffset);
           if (!p.timestamp && !p.t) {
@@ -463,6 +500,7 @@ export class Game {
       const isVictim = data.victimId === myId;
       const isHeadshot = data.isHeadshot || data.hitPart === 'head';
 
+      // Lock input for both players during replay
       this.player.setInputLocked(true);
       if (this.scopeOverlay) this.scopeOverlay.forceReset();
 
@@ -482,15 +520,16 @@ export class Game {
       };
 
       if (isShooter && this.bulletCam && this.opponent) {
+        // Shooter perspective: bullet follow / tracking
         this.bulletCam.start('shooter', startVec, hitVec, this.opponent, isHeadshot, killInfo, () => {});
       } else if (isVictim && this.bulletCam) {
+        // Victim perspective: cinematic incoming view
         this.player.die();
         
+        // --- FIX: Spawn a dummy humanoid body for the victim so we can see the ragdoll and X-ray ---
         if (this.killCamVictimBody) {
           this.killCamVictimBody.dispose();
         }
-        
-        // --- FIX: Use server-authoritative positions for the replay! ---
         const victimPos = data.victimPos || { x: 0, y: 0, z: 0 };
         const victimYaw = data.victimRot ? data.victimRot.y : 0;
         
@@ -513,17 +552,20 @@ export class Game {
       }
     };
 
+    // Server announces kill cam concluded: score updates & input unlocked
     this.network.onKillCamEnd = (data) => {
       if (this.bulletCam && this.bulletCam.isActive) {
         this.bulletCam.complete();
       }
       this.player.setInputLocked(false);
       
+      // Cleanup the temporary victim body
       if (this.killCamVictimBody) {
         this.killCamVictimBody.dispose();
         this.killCamVictimBody = null;
       }
 
+      // Section D: Ensure remote character is visible and active after kill cam
       if (this.opponent) {
         this.opponent.setVisible(true);
       }

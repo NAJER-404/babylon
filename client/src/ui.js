@@ -113,7 +113,12 @@ export class UIManager {
       joinRoomBtn: document.getElementById('btn-join-room'),
       createRoomBtn: document.getElementById('btn-create-room'),
       playerNameInput: document.getElementById('input-player-name'),
-      onlineErrorMsg: document.getElementById('online-error-msg')
+      onlineErrorMsg: document.getElementById('online-error-msg'),
+      
+      // --- NEW: Matchmaking UI Elements ---
+      findMatchBtn: document.getElementById('btn-find-match'),
+      cancelFindMatchBtn: document.getElementById('btn-cancel-find-match'),
+      matchmakingStatus: document.getElementById('matchmaking-status')
     };
 
     // Settings elements
@@ -147,9 +152,7 @@ export class UIManager {
           this.online.playerNameInput.value = clean;
         }
       }
-    } catch (e) {
-      // localStorage disabled or not available
-    }
+    } catch (e) {}
   }
 
   savePlayerName(name) {
@@ -183,13 +186,11 @@ export class UIManager {
         e.preventDefault();
         this.toggleDebugOverlay();
       } else if (e.code === 'Escape') {
-        // If an overlay modal is open (like settings or online), close it cleanly
-        if (!this.screens.onlineModal.classList.contains('hidden') ||
-            !this.screens.waitingRoom.classList.contains('hidden')) {
+        if (!this.screens.onlineModal.classList.contains('hidden') || !this.screens.waitingRoom.classList.contains('hidden')) {
           this.callbacks.onCancelRoom?.();
+          this.callbacks.onCancelFindMatch?.();
           this.hideAllModals();
-        } else if (!this.screens.practiceSelect.classList.contains('hidden') ||
-                   !this.screens.settingsModal.classList.contains('hidden')) {
+        } else if (!this.screens.practiceSelect.classList.contains('hidden') || !this.screens.settingsModal.classList.contains('hidden')) {
           this.hideAllModals();
         }
       }
@@ -245,7 +246,20 @@ export class UIManager {
       });
     });
 
-    // 6. Online Mode Buttons with double-click prevention
+    // --- 6. Matchmaking Buttons ---
+    this.online.findMatchBtn?.addEventListener('click', () => {
+      this.callbacks.onUiClick?.();
+      const name = this.getPlayerName();
+      this.callbacks.onFindMatch?.(name);
+    });
+
+    this.online.cancelFindMatchBtn?.addEventListener('click', () => {
+      this.callbacks.onUiClick?.();
+      this.callbacks.onCancelFindMatch?.();
+    });
+    // ------------------------------
+
+    // 7. Online Mode Buttons with double-click prevention
     this.online.createRoomBtn?.addEventListener('click', () => {
       this.callbacks.onUiClick?.();
       this.online.createRoomBtn.disabled = true;
@@ -279,7 +293,7 @@ export class UIManager {
       }
     });
 
-    // 7. Pause Menu
+    // 8. Pause Menu
     document.getElementById('btn-resume')?.addEventListener('click', () => {
       this.callbacks.onUiClick?.();
       this.callbacks.onResumeGame?.();
@@ -295,7 +309,7 @@ export class UIManager {
       this.callbacks.onLeaveMatch?.();
     });
 
-    // 8. Settings Sliders & Checkboxes
+    // 9. Settings Sliders & Checkboxes
     this.settings.sensSlider?.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       this.settings.sensVal.textContent = val.toFixed(1);
@@ -327,7 +341,7 @@ export class UIManager {
       this.hideModal('settingsModal');
     });
 
-    // 9. Game Over Buttons
+    // 10. Game Over Buttons
     this.gameOver.rematchBtn?.addEventListener('click', () => {
       this.callbacks.onUiClick?.();
       this.gameOver.rematchBtn.disabled = true;
@@ -340,16 +354,17 @@ export class UIManager {
       this.callbacks.onLeaveMatch?.();
     });
 
-    // 10. Modal Close Buttons (X)
+    // 11. Modal Close Buttons (X)
     document.querySelectorAll('.btn-close-modal').forEach(btn => {
       btn.addEventListener('click', () => {
         this.callbacks.onUiClick?.();
         this.callbacks.onCancelRoom?.();
+        this.callbacks.onCancelFindMatch?.(); // Cancel queue if modal is closed
         this.hideAllModals();
       });
     });
 
-    // 11. Debug Controls (Hitboxes & Network Sim)
+    // 12. Debug Controls (Hitboxes & Network Sim)
     this.debug.clientHitboxBtn?.addEventListener('click', () => {
       this.callbacks.onToggleClientHitboxes?.();
     });
@@ -404,6 +419,23 @@ export class UIManager {
     this.online.connStatus.className = `conn-pill ${status}`;
     if (this.online.connLabel) {
       this.online.connLabel.textContent = status.toUpperCase();
+    }
+  }
+
+  // --- NEW: Matchmaking UI Toggle ---
+  showMatchmakingState(isSearching) {
+    if (isSearching) {
+      this.online.findMatchBtn?.classList.add('hidden');
+      this.online.createRoomBtn?.classList.add('hidden');
+      this.online.joinCodeInput?.parentElement?.classList.add('hidden');
+      this.online.cancelFindMatchBtn?.classList.remove('hidden');
+      this.online.matchmakingStatus?.classList.remove('hidden');
+    } else {
+      this.online.findMatchBtn?.classList.remove('hidden');
+      this.online.createRoomBtn?.classList.remove('hidden');
+      this.online.joinCodeInput?.parentElement?.classList.remove('hidden');
+      this.online.cancelFindMatchBtn?.classList.add('hidden');
+      this.online.matchmakingStatus?.classList.add('hidden');
     }
   }
 
@@ -717,7 +749,6 @@ export class UIManager {
     }
   }
 
-  // Section G: Server-Authoritative Match Timer (both windows agree)
   updateMatchTimerServerAuthoritative(estimatedServerNow, matchStartServerTime, duration = 600) {
     if (!this.hud.timerVal) return;
     if (!matchStartServerTime) {

@@ -1,4 +1,4 @@
-// Server-side Room, Player & Combat Lifecycle Manager for Babylon 1v1 Arena FPS
+// Server-side Room, Player & Combat Lifecycle Manager
 const SPAWN_POINTS = [
   { x: -62, y: 1.2, z: -62, rotY: Math.PI / 4 },
   { x: 62, y: 1.2, z: 62, rotY: (5 * Math.PI) / 4 },
@@ -12,7 +12,7 @@ const HEAD_DAMAGE = 200;
 const LEG_DAMAGE = 80;
 const MELEE_DAMAGE = 100;
 const MELEE_MAX_DISTANCE = 2.7;
-const KILL_CAM_DURATION_MS = 6000;
+const KILL_CAM_DURATION_MS = 6000; 
 const RESPAWN_DELAY_AFTER_KILLCAM_MS = 1200;
 const SPAWN_PROTECTION_MS = 2000;
 const ROOM_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
@@ -26,9 +26,47 @@ export class RoomManager {
     this.playerToRoom = new Map();
     this.debugHitboxSubscribers = new Set();
     this.processedShots = new Map();
+    
+    // --- NEW: Matchmaking Queue ---
+    this.matchmakingQueue = []; // Array of { socket, playerName, socketId }
 
     setInterval(() => this.cleanupInactiveRooms(), 5 * 60 * 1000);
     setInterval(() => this.cleanupProcessedShots(), 10 * 1000);
+  }
+
+  // --- NEW: Matchmaking Logic ---
+  addToMatchmaking(socket, rawName) {
+    const playerName = this.sanitizeName(rawName, 'Player');
+    
+    // Check if already in queue
+    if (this.matchmakingQueue.some(p => p.socketId === socket.id)) return;
+
+    // Check if someone is waiting
+    if (this.matchmakingQueue.length > 0) {
+      const opponent = this.matchmakingQueue.shift(); // Remove them from queue
+      
+      // Create room for opponent
+      const res1 = this.createRoom(opponent.socket, opponent.playerName);
+      
+      // Join room for current player
+      const res2 = this.joinRoom(socket, res1.roomCode, playerName);
+      
+      // Notify both players they found a match
+      this.io.to(opponent.socketId).emit('match_found', {
+        ...res1, opponentName: playerName
+      });
+      this.io.to(socket.id).emit('match_found', {
+        ...res2, opponentName: opponent.playerName
+      });
+    } else {
+      // Add to queue and wait
+      this.matchmakingQueue.push({ socket, playerName, socketId: socket.id });
+      socket.emit('matchmaking_status', { status: 'searching' });
+    }
+  }
+
+  removeFromMatchmaking(socketId) {
+    this.matchmakingQueue = this.matchmakingQueue.filter(p => p.socketId !== socketId);
   }
 
   setDebugHitboxesSubscription(socketId, enabled) {
@@ -82,6 +120,7 @@ export class RoomManager {
   }
 
   cancelRoom(socketId) {
+    this.removeFromMatchmaking(socketId);
     const roomCode = this.playerToRoom.get(socketId);
     if (!roomCode) return { success: false, error: 'No active room' };
     const room = this.rooms.get(roomCode);
@@ -458,6 +497,7 @@ export class RoomManager {
   }
 
   handleDisconnect(socketId) {
+    this.removeFromMatchmaking(socketId); // <-- Clean up queue
     const roomCode = this.playerToRoom.get(socketId);
     this.debugHitboxSubscribers.delete(socketId);
     if (!roomCode) return;
@@ -497,7 +537,6 @@ export class RoomManager {
     const dx = direction.x / len; const dy = direction.y / len; const dz = direction.z / len;
     const dir = { x: dx, y: dy, z: dz };
 
-    // MASSIVELY INCREASED HEAD RADIUS TO 1.5 (3 meters diameter)
     const headY = targetPos.y + (isCrouching ? 1.35 : 1.95);
     const headCenter = { x: targetPos.x, y: headY, z: targetPos.z };
     const headHit = this.intersectRaySphere(origin, dir, headCenter, 1.5);
