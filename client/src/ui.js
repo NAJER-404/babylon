@@ -65,11 +65,21 @@ export class UIManager {
       matchup: document.getElementById('countdown-matchup')
     };
 
-    // Performance & Telemetry Debug Overlay
+    this.resumeBanner = document.getElementById('resume-banner');
+
+    // Performance & Telemetry Debug Overlay (Section J)
     this.debug = {
       overlay: document.getElementById('debug-overlay'),
+      localId: document.getElementById('debug-local-id'),
+      remoteId: document.getElementById('debug-remote-id'),
+      sendRate: document.getElementById('debug-send-rate'),
+      snapRate: document.getElementById('debug-snap-rate'),
+      snapAge: document.getElementById('debug-snap-age'),
+      remotePos: document.getElementById('debug-remote-pos'),
+      remoteAnim: document.getElementById('debug-remote-anim'),
       ping: document.getElementById('debug-ping'),
-      jitter: document.getElementById('debug-jitter'),
+      clockOffset: document.getElementById('debug-clock-offset'),
+      matchTime: document.getElementById('debug-match-time'),
       fps: document.getElementById('debug-fps'),
       serverTick: document.getElementById('debug-server-tick'),
       packetRate: document.getElementById('debug-packet-rate'),
@@ -432,14 +442,42 @@ export class UIManager {
 
   updateDebugMetrics(data = {}) {
     if (!this.isDebugVisible) return;
-    if (this.debug.fps && data.fps !== undefined) {
-      this.debug.fps.textContent = Math.round(data.fps);
+    if (this.debug.localId && data.localId !== undefined) {
+      this.debug.localId.textContent = data.localId || '--';
+    }
+    if (this.debug.remoteId && data.remoteId !== undefined) {
+      this.debug.remoteId.textContent = data.remoteId || '--';
+    }
+    if (this.debug.sendRate && data.sendRate !== undefined) {
+      this.debug.sendRate.textContent = `${data.sendRate} pps`;
+    }
+    if (this.debug.snapRate && data.snapRate !== undefined) {
+      this.debug.snapRate.textContent = `${data.snapRate} /s`;
+    }
+    if (this.debug.snapAge && data.snapAge !== undefined) {
+      this.debug.snapAge.textContent = `${Math.round(data.snapAge)} ms`;
+    }
+    if (this.debug.remotePos && data.remotePos !== undefined) {
+      this.debug.remotePos.textContent = data.remotePos;
+    }
+    if (this.debug.remoteAnim && data.remoteAnim !== undefined) {
+      this.debug.remoteAnim.textContent = data.remoteAnim;
     }
     if (this.debug.ping && data.ping !== undefined) {
-      this.debug.ping.textContent = `${Math.round(data.ping)}ms (max ${Math.round(data.maxPing || data.ping)}ms)`;
+      if (typeof data.ping === 'number' && Number.isFinite(data.ping) && data.ping > 0) {
+        this.debug.ping.textContent = `${Math.round(data.ping)} ms`;
+      } else {
+        this.debug.ping.textContent = '--';
+      }
     }
-    if (this.debug.jitter && data.jitter !== undefined) {
-      this.debug.jitter.textContent = `${Math.round(data.jitter)}ms`;
+    if (this.debug.clockOffset && data.clockOffset !== undefined) {
+      this.debug.clockOffset.textContent = `${Math.round(data.clockOffset)} ms`;
+    }
+    if (this.debug.matchTime && data.matchTime !== undefined) {
+      this.debug.matchTime.textContent = data.matchTime;
+    }
+    if (this.debug.fps && data.fps !== undefined) {
+      this.debug.fps.textContent = Math.round(data.fps);
     }
     if (this.debug.serverTick && data.serverTick !== undefined) {
       this.debug.serverTick.textContent = `${data.serverTick} Hz`;
@@ -463,7 +501,7 @@ export class UIManager {
       if (data.events.length === 0) {
         this.debug.eventsList.innerHTML = '<div class="debug-event-item">No events yet</div>';
       } else {
-        this.debug.eventsList.innerHTML = data.events.map(ev => `<div class="debug-event-item">${ev}</div>`).join('');
+        this.debug.eventsList.innerHTML = data.events.map(ev => `<div class="debug-event-item">${ev.time ? `[${ev.time}] ` : ''}${ev.text || ev}</div>`).join('');
       }
     }
   }
@@ -528,6 +566,18 @@ export class UIManager {
 
   hidePauseMenu() {
     this.screens.pauseMenu.classList.add('hidden');
+  }
+
+  showResumeBanner() {
+    if (this.resumeBanner) {
+      this.resumeBanner.classList.remove('hidden');
+    }
+  }
+
+  hideResumeBanner() {
+    if (this.resumeBanner) {
+      this.resumeBanner.classList.add('hidden');
+    }
   }
 
   showModal(modalName) {
@@ -615,14 +665,37 @@ export class UIManager {
 
   updatePing(pingMs, jitterMs = 0) {
     if (!this.hud.pingVal) return;
+    if (!pingMs || !Number.isFinite(pingMs) || pingMs <= 0) {
+      this.hud.pingVal.textContent = '--';
+      this.hud.pingVal.style.color = 'var(--text-muted)';
+      return;
+    }
+    const val = Math.round(pingMs);
     const jitterIcon = jitterMs > 25 ? ' ⚠️' : '';
-    this.hud.pingVal.textContent = `${Math.round(pingMs)}ms${jitterIcon}`;
-    if (pingMs < 80) {
+    this.hud.pingVal.textContent = `${val}ms${jitterIcon}`;
+    if (val < 80) {
       this.hud.pingVal.style.color = '#10b981';
-    } else if (pingMs <= 150) {
+    } else if (val <= 150) {
       this.hud.pingVal.style.color = '#f59e0b';
     } else {
       this.hud.pingVal.style.color = '#ef4444';
+    }
+  }
+
+  // Section G: Server-Authoritative Match Timer (both windows agree)
+  updateMatchTimerServerAuthoritative(estimatedServerNow, matchStartServerTime, duration = 600) {
+    if (!this.hud.timerVal) return;
+    if (!matchStartServerTime) {
+      this.hud.timerVal.textContent = '00:00';
+      return;
+    }
+    const elapsedSec = Math.max(0, Math.floor((estimatedServerNow - matchStartServerTime) / 1000));
+    const mins = Math.floor(elapsedSec / 60).toString().padStart(2, '0');
+    const secs = (elapsedSec % 60).toString().padStart(2, '0');
+    const formatted = `${mins}:${secs}`;
+    this.hud.timerVal.textContent = formatted;
+    if (this.debug.matchTime) {
+      this.debug.matchTime.textContent = formatted;
     }
   }
 

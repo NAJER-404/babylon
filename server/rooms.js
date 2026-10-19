@@ -257,16 +257,32 @@ export class RoomManager {
           p._hasLoggedStall = false;
         }
 
+        // Section A & G: Send localId, remoteId, matchStartServerTime, and duration individually to each client
+        for (const p of room.playerList) {
+          const opp = room.playerList.find(x => x.socketId !== p.socketId) || p;
+          this.io.to(p.socketId).emit('match_start', {
+            ...matchInfo,
+            localId: p.socketId,
+            remoteId: opp.socketId,
+            playerId: p.socketId,
+            matchStartServerTime: room.startTime,
+            duration: 600,
+            serverTimestamp: room.startTime
+          });
+        }
         this.io.to(room.code).emit('match_start', {
           ...matchInfo,
-          serverTimestamp: Date.now()
+          matchStartServerTime: room.startTime,
+          duration: 600,
+          serverTimestamp: room.startTime
         });
       }
     }, 1000);
   }
 
-  // Update player position with speed validation & anti-rubber-banding (Part 1 & Part 4)
-  updatePlayer(socketId, data) {
+  // Update player position & state with speed validation & anti-rubber-banding (Section B & C)
+  updatePlayerState(socketId, data) {
+    if (!data) return;
     const roomCode = this.playerToRoom.get(socketId);
     if (!roomCode) return;
     const room = this.rooms.get(roomCode);
@@ -284,37 +300,41 @@ export class RoomManager {
     // Even if player is dead/spectating, keeping lastActiveTime refreshed serves as heartbeat
     if (!player.isAlive) return;
 
-    // Unpack compact or standard payload (Part 1)
-    let newX, newY, newZ, newVx, newVy, newVz, newRx, newRy, activeWep, isScoped, isCrouching, isSprinting;
+    // Unpack compact or standard payload
+    let newX, newY, newZ, newVx, newVy, newVz, newYaw, newPitch, activeWep, isScoped, isCrouching, isSprinting, onGround, swing, seq;
+
+    seq = data.seq !== undefined ? Number(data.seq) : (player.seq || 0);
 
     if (data.x !== undefined) {
-      // Compact payload: { x, y, z, vx, vy, vz, rx, ry, w, s, c, sp, t }
       newX = Number(data.x);
       newY = Number(data.y);
       newZ = Number(data.z);
       newVx = Number(data.vx || 0);
       newVy = Number(data.vy || 0);
       newVz = Number(data.vz || 0);
-      newRx = Number(data.rx || 0);
-      newRy = Number(data.ry || 0);
-      activeWep = (data.w === 1 || data.w === 'knife') ? 'knife' : 'sniper';
-      isScoped = !!data.s;
-      isCrouching = !!data.c;
-      isSprinting = !!data.sp;
+      newYaw = Number(data.yaw !== undefined ? data.yaw : (data.ry || 0));
+      newPitch = Number(data.pitch !== undefined ? data.pitch : (data.rx || 0));
+      activeWep = (data.weapon === 'knife' || data.w === 1 || data.w === 'knife') ? 'knife' : 'sniper';
+      isScoped = !!(data.scoped || data.s);
+      isCrouching = !!(data.crouch || data.c);
+      isSprinting = !!(data.sprint || data.sp);
+      onGround = data.onGround !== undefined ? !!data.onGround : true;
+      swing = !!data.swing;
     } else {
-      // Standard payload
       newX = Number(data.position?.x ?? player.position.x);
       newY = Number(data.position?.y ?? player.position.y);
       newZ = Number(data.position?.z ?? player.position.z);
       newVx = Number(data.velocity?.x ?? player.velocity?.x ?? 0);
       newVy = Number(data.velocity?.y ?? player.velocity?.y ?? 0);
       newVz = Number(data.velocity?.z ?? player.velocity?.z ?? 0);
-      newRx = Number(data.rotation?.x ?? player.rotation.x);
-      newRy = Number(data.rotation?.y ?? player.rotation.y);
+      newYaw = Number(data.rotation?.y ?? player.rotation.y);
+      newPitch = Number(data.rotation?.x ?? player.rotation.x);
       activeWep = data.activeWeapon || player.activeWeapon;
       isScoped = !!data.isScoped;
       isCrouching = !!data.isCrouching;
       isSprinting = !!data.isSprinting;
+      onGround = true;
+      swing = false;
     }
 
     // Number validation: strictly require finite numbers
@@ -328,8 +348,6 @@ export class RoomManager {
     newZ = Math.max(-78, Math.min(78, newZ));
 
     // Kinematic speed validation (Part 4)
-    // Knife sprint is 12.5 u/s; Sniper sprint is 7.5 u/s.
-    // Allow +35% tolerance plus 3.0 u/s latency jitter allowance.
     const baseSprintSpeed = activeWep === 'knife' ? 12.5 : 7.5;
     const maxAllowedSpeed = baseSprintSpeed * 1.35 + 3.0;
 
@@ -340,7 +358,6 @@ export class RoomManager {
 
     // Only correct (snap back) when error exceeds large threshold (prevent false rubber-banding)
     if (distMoved > maxAllowedDist + 3.0 && distMoved > 6.0) {
-      // Large teleport/desync detected: send position correction to client
       this.io.to(socketId).volatile.emit('position_correction', {
         position: { ...player.position },
         x: player.position.x,
@@ -355,12 +372,39 @@ export class RoomManager {
     player.position.y = newY;
     player.position.z = newZ;
     player.velocity = { x: newVx, y: newVy, z: newVz };
-    player.rotation.x = newRx;
-    player.rotation.y = newRy;
+    player.rotation.x = newPitch;
+    player.rotation.y = newYaw;
+    player.yaw = newYaw;
+    player.pitch = newPitch;
     player.activeWeapon = activeWep;
     player.isScoped = isScoped;
     player.isCrouching = isCrouching;
     player.isSprinting = isSprinting;
+    player.onGround = onGround;
+    player.swing = swing;
+    player.seq = seq;
+    player.lastUpdate = now;
+
+    // Push into ring buffer (~1.1s)
+    player.positionHistory.push({
+      timestamp: now,
+      position: { x: newX, y: newY, z: newZ },
+      velocity: { x: newVx, y: newVy, z: newVz },
+      rotation: { x: newPitch, y: newYaw },
+      yaw: newYaw,
+      pitch: newPitch,
+      isCrouching,
+      isAlive: player.isAlive,
+      isProtected: player.isProtected && now < player.protectedUntil
+    });
+    if (player.positionHistory.length > POSITION_HISTORY_SIZE) {
+      player.positionHistory.shift();
+    }
+  }
+
+  // Alias for backward compatibility
+  updatePlayer(socketId, data) {
+    return this.updatePlayerState(socketId, data);
   }
 
   switchWeapon(socketId, weaponId) {
@@ -954,13 +998,13 @@ export class RoomManager {
       const debugHitboxData = [];
 
       for (const p of room.playerList) {
-        // Diagnostic stall warning: log when a client stops sending updates during active play
+        // Diagnostic stall warning: log when a client stops sending updates during active play (> 500ms)
         if (room.status === 'playing' && p.isAlive) {
           const timeSinceUpdate = now - (p.lastActiveTime || now);
-          if (timeSinceUpdate > 2500 && !p._hasLoggedStall) {
+          if (timeSinceUpdate > 500 && !p._hasLoggedStall) {
             p._hasLoggedStall = true;
             console.warn(`[DEBUG NET] Client updates stalled for player "${p.name}" (${p.socketId}) in room ${code} (${timeSinceUpdate}ms since last packet)`);
-          } else if (timeSinceUpdate < 1000) {
+          } else if (timeSinceUpdate < 300) {
             p._hasLoggedStall = false;
           }
         }
@@ -971,6 +1015,8 @@ export class RoomManager {
           position: { x: p.position.x, y: p.position.y, z: p.position.z },
           velocity: { ...(p.velocity || { x: 0, y: 0, z: 0 }) },
           rotation: { x: p.rotation.x, y: p.rotation.y },
+          yaw: p.yaw !== undefined ? p.yaw : p.rotation.y,
+          pitch: p.pitch !== undefined ? p.pitch : p.rotation.x,
           isCrouching: p.isCrouching,
           isAlive: p.isAlive,
           isProtected: p.isProtected && now < p.protectedUntil
@@ -985,39 +1031,50 @@ export class RoomManager {
         const vx = Math.round((p.velocity?.x || 0) * 100) / 100;
         const vy = Math.round((p.velocity?.y || 0) * 100) / 100;
         const vz = Math.round((p.velocity?.z || 0) * 100) / 100;
-        const rx = Math.round(p.rotation.x * 100) / 100;
-        const ry = Math.round(p.rotation.y * 100) / 100;
+        const yaw = Math.round((p.yaw !== undefined ? p.yaw : p.rotation.y) * 100) / 100;
+        const pitch = Math.round((p.pitch !== undefined ? p.pitch : p.rotation.x) * 100) / 100;
 
-        // Comprehensive serialized player record (supports both compact and verbose client keys):
+        // Section C: Broadcast snapshot containing both players' complete state
         playersData.push({
           id: p.socketId,
           socketId: p.socketId,
+          seq: p.seq || 0,
           num: p.playerNumber,
           playerNumber: p.playerNumber,
           name: p.name,
           x: posX,
           y: posY,
           z: posZ,
-          position: { x: posX, y: posY, z: posZ },
-          p: [posX, posY, posZ],
+          yaw,
+          pitch,
           vx,
           vy,
           vz,
+          weapon: p.activeWeapon || 'sniper',
+          crouch: p.isCrouching ? 1 : 0,
+          sprint: p.isSprinting ? 1 : 0,
+          scoped: p.isScoped ? 1 : 0,
+          onGround: (p.onGround !== false) ? 1 : 0,
+          swing: p.swing ? 1 : 0,
+          alive: p.isAlive ? 1 : 0,
+          hp: p.health,
+          // Backward compatibility aliases:
+          position: { x: posX, y: posY, z: posZ },
+          p: [posX, posY, posZ],
           velocity: { x: vx, y: vy, z: vz },
           v: [vx, vy, vz],
-          rx,
-          ry,
-          rotation: { x: rx, y: ry },
-          r: [rx, ry],
-          w: p.activeWeapon,
-          activeWeapon: p.activeWeapon,
+          rx: pitch,
+          ry: yaw,
+          rotation: { x: pitch, y: yaw },
+          r: [pitch, yaw],
+          w: p.activeWeapon || 'sniper',
+          activeWeapon: p.activeWeapon || 'sniper',
           s: p.isScoped ? 1 : 0,
           isScoped: !!p.isScoped,
           c: p.isCrouching ? 1 : 0,
           isCrouching: !!p.isCrouching,
           sp: p.isSprinting ? 1 : 0,
           isSprinting: !!p.isSprinting,
-          hp: p.health,
           health: p.health,
           a: p.isAlive ? 1 : 0,
           isAlive: !!p.isAlive,
@@ -1042,11 +1099,14 @@ export class RoomManager {
         });
       }
 
-      // Compact volatile world state broadcast (dropping old updates is fine)
-      this.io.to(code).volatile.emit('world_state', {
+      // Section C: Broadcast { serverTime, players } via state and world_state
+      const broadcastPayload = {
+        serverTime: now,
         t: now,
         players: playersData
-      });
+      };
+      this.io.to(code).volatile.emit('state', broadcastPayload);
+      this.io.to(code).volatile.emit('world_state', broadcastPayload);
 
       // Send debug server hitboxes to subscribed debug clients (Part 0)
       for (const [socketId] of room.players) {

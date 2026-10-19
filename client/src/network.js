@@ -12,7 +12,13 @@ export class NetworkManager {
     this.playerNumber = null;
     this.playerName = 'Player 1';
 
-    // Latency & Clock Synchronization (Part 1)
+    // Section A: Identity
+    this.localId = null;
+    this.remoteId = null;
+    this.matchStartServerTime = 0;
+    this.matchDuration = 600;
+
+    // Latency & Clock Synchronization (Part 1 & Section H)
     this.pingMs = 0;
     this.smoothedPing = 0;
     this.maxPing = 0;
@@ -26,11 +32,17 @@ export class NetworkManager {
     this.sendWorker = null;
     this.sendIntervalFallback = null;
     this.getUpdatePayload = null;
+    this.onBackgroundTick = null;
     this.lastPeriodicSendTime = 0;
 
-    // Packet metrics (Part 0)
+    // Packet & Telemetry metrics (Section J)
     this.packetsInCounter = 0;
     this.packetsOutCounter = 0;
+    this.sendRateCounter = 0;
+    this.sendRate = 0;
+    this.snapshotCounter = 0;
+    this.snapshotsPerSecond = 0;
+    this.lastSnapshotReceivedTime = 0;
     this.ppsIn = 0;
     this.ppsOut = 0;
     this.ppsInterval = null;
@@ -184,13 +196,22 @@ export class NetworkManager {
 
     this.socket.on('match_start', (data) => {
       this.roomCode = data.roomCode;
+      this.localId = data.localId || this.socket?.id;
+      this.remoteId = data.remoteId || null;
+      this.matchStartServerTime = data.matchStartServerTime || data.serverTimestamp || Date.now();
+      this.matchDuration = data.duration || 600;
       this.logEvent('Match Started');
       if (this.onMatchStart) this.onMatchStart(data);
     });
 
-    this.socket.on('world_state', receiveWithSim((data) => {
+    const handleSnapshot = receiveWithSim((data) => {
+      this.snapshotCounter++;
+      this.lastSnapshotReceivedTime = Date.now();
       if (this.onWorldState) this.onWorldState(data);
-    }, 'world_state'));
+    }, 'state');
+
+    this.socket.on('state', handleSnapshot);
+    this.socket.on('world_state', handleSnapshot);
 
     this.socket.on('hit_confirmed', (data) => {
       this.logEvent(`Hit: ${data.part} (${data.damage} dmg)`);
@@ -255,53 +276,62 @@ export class NetworkManager {
       if (this.onDebugServerHitboxes) this.onDebugServerHitboxes(data);
     });
 
-    // App-level ping and pong carrying timestamps with EMA smoothing (Part 1)
-    this.socket.on('pong_check', (payload) => {
-      this.packetsInCounter++;
-      const nowPerf = performance.now();
-      const nowWall = Date.now();
-      const sentTime = typeof payload === 'number' ? payload : (payload.clientTimestamp || payload.t0);
-      const rtt = Math.max(1, nowPerf - sentTime);
-      this.pingMs = rtt;
+    // Section H: App-level ping and pong carrying timestamps with EMA smoothing
+    this.socket.on('pong', (payload) => this.handlePong(payload));
+    this.socket.on('pong_check', (payload) => this.handlePong(payload));
+  }
 
-      // Exponential Moving Average (EMA) smoothing
-      if (this.smoothedPing === 0) {
-        this.smoothedPing = rtt;
-      } else {
-        this.smoothedPing = 0.85 * this.smoothedPing + 0.15 * rtt;
-      }
+  handlePong(payload, fallbackSentTime) {
+    this.packetsInCounter++;
+    const now = Date.now();
+    let sentTime = fallbackSentTime;
+    let serverTime = now;
 
-      // Track max ping with gentle decay and jitter
-      this.maxPing = Math.max(this.maxPing * 0.96, rtt);
-      this.jitter = Math.abs(rtt - this.smoothedPing);
+    if (typeof payload === 'number') {
+      sentTime = payload;
+    } else if (payload && typeof payload === 'object') {
+      sentTime = payload.clientTime ?? payload.clientTimestamp ?? payload.wallTime ?? fallbackSentTime ?? now;
+      serverTime = payload.serverTime ?? payload.serverTimestamp ?? now;
+    }
 
-      if (payload && typeof payload === 'object' && payload.serverTimestamp) {
-        // Calculate clock offset between local wall clock and server clock
-        this.serverClockOffset = payload.serverTimestamp - (nowWall - (rtt / 2));
-      }
+    const rtt = Math.max(1, now - sentTime);
+    if (!Number.isFinite(rtt) || rtt < 0 || rtt > 5000) {
+      return;
+    }
 
-      if (this.onPingUpdate) {
-        this.onPingUpdate({
-          ping: Math.round(this.smoothedPing),
-          rawPing: Math.round(rtt),
-          maxPing: Math.round(this.maxPing),
-          jitter: Math.round(this.jitter)
-        });
-      }
-    });
+    this.pingMs = rtt;
+    if (this.smoothedPing === 0) {
+      this.smoothedPing = rtt;
+    } else {
+      this.smoothedPing = 0.85 * this.smoothedPing + 0.15 * rtt;
+    }
+
+    this.maxPing = Math.max(this.maxPing * 0.95, rtt);
+    this.jitter = Math.abs(rtt - this.smoothedPing);
+
+    // Section H: clock offset = serverTime - (clientSend + RTT / 2)
+    this.serverClockOffset = serverTime - (sentTime + (rtt / 2));
+
+    if (this.onPingUpdate) {
+      this.onPingUpdate(Math.round(this.smoothedPing), Math.round(this.jitter));
+    }
   }
 
   startPingMonitor() {
     this.stopPingMonitor();
     this.pingInterval = setInterval(() => {
       if (this.socket && this.socket.connected) {
+        const clientSend = Date.now();
         this.packetsOutCounter++;
+        this.socket.emit('ping', clientSend, (res) => {
+          this.handlePong(res, clientSend);
+        });
         this.socket.emit('ping_check', {
           clientTimestamp: performance.now(),
-          wallTime: Date.now()
+          wallTime: clientSend
         });
       }
-    }, 1500);
+    }, 1000);
   }
 
   stopPingMonitor() {
@@ -316,9 +346,18 @@ export class NetworkManager {
     this.ppsInterval = setInterval(() => {
       this.ppsIn = this.packetsInCounter;
       this.ppsOut = this.packetsOutCounter;
+      this.sendRate = this.sendRateCounter;
+      this.snapshotsPerSecond = this.snapshotCounter;
       this.packetsInCounter = 0;
       this.packetsOutCounter = 0;
+      this.sendRateCounter = 0;
+      this.snapshotCounter = 0;
     }, 1000);
+  }
+
+  getLastSnapshotAgeMs() {
+    if (!this.lastSnapshotReceivedTime) return 0;
+    return Math.max(0, Date.now() - this.lastSnapshotReceivedTime);
   }
 
   // Get current server-estimated timestamp
@@ -396,12 +435,13 @@ export class NetworkManager {
   }
 
   // Dedicated 30 Hz Send Loop driven by Web Worker timer (not paused on window blur/tab switch)
-  startSendLoop(getUpdatePayload) {
+  startSendLoop(getUpdatePayload, onBackgroundTick = null) {
     this.stopSendLoop();
     this.getUpdatePayload = getUpdatePayload;
+    this.onBackgroundTick = onBackgroundTick;
     this.lastPeriodicSendTime = Date.now();
 
-    // 1. Inline Web Worker timer immune to background tab throttling (Part 1)
+    // 1. Inline Web Worker timer immune to background tab throttling (Part 1 & Section B)
     try {
       const workerBlob = new Blob([
         `let timer = null;
@@ -452,9 +492,15 @@ export class NetworkManager {
       this.sendIntervalFallback = null;
     }
     this.getUpdatePayload = null;
+    this.onBackgroundTick = null;
   }
 
   emitPeriodicStateUpdate() {
+    if (typeof this.onBackgroundTick === 'function') {
+      try {
+        this.onBackgroundTick();
+      } catch (e) {}
+    }
     if (!this.socket || !this.socket.connected) return;
     if (typeof this.getUpdatePayload === 'function') {
       const state = this.getUpdatePayload();
@@ -465,12 +511,14 @@ export class NetworkManager {
     }
   }
 
-  // Compact volatile 30 Hz player state updates (Part 1)
+  // Compact volatile 30 Hz player state updates (Section B)
   sendPlayerUpdate(compactData) {
     if (!this.socket || !this.socket.connected) return;
 
     const emitUpdate = () => {
       this.packetsOutCounter++;
+      this.sendRateCounter++;
+      this.socket.volatile.emit('state', compactData);
       this.socket.volatile.emit('player_update', compactData);
     };
 

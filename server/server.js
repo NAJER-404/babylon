@@ -120,13 +120,21 @@ function checkUpdateRateLimit(socketId, maxPerSec = 50) {
 }
 
 io.on('connection', (socket) => {
-  // Clock offset & ping measurement
-  socket.on('ping_check', (clientTimestamp) => {
-    socket.emit('pong_check', {
-      clientTimestamp,
-      serverTimestamp: Date.now()
-    });
-  });
+  // Clock offset & ping measurement (Section H)
+  const handlePing = (clientTime, callback) => {
+    const serverTime = Date.now();
+    const cTime = typeof clientTime === 'number'
+      ? clientTime
+      : (clientTime?.clientTime ?? clientTime?.clientTimestamp ?? clientTime?.wallTime ?? Date.now());
+    if (typeof callback === 'function') {
+      callback({ clientTime: cTime, serverTime });
+    } else {
+      socket.emit('pong', { clientTime: cTime, serverTime });
+      socket.emit('pong_check', { clientTime: cTime, serverTime });
+    }
+  };
+  socket.on('ping', handlePing);
+  socket.on('ping_check', handlePing);
 
   // Create room
   const handleCreateRoom = (data, callback) => {
@@ -237,12 +245,14 @@ io.on('connection', (socket) => {
   socket.on('join_room', handleJoinRoom);
   socket.on('joinRoom', handleJoinRoom);
 
-  // Player position & rotation updates
-  socket.on('player_update', (data) => {
-    if (!checkUpdateRateLimit(socket.id, 50)) return;
+  // Section B & C: Player state updates
+  const handlePlayerState = (data) => {
+    if (!checkUpdateRateLimit(socket.id, 60)) return;
     if (!data || typeof data !== 'object') return;
-    roomManager.updatePlayer(socket.id, data);
-  });
+    roomManager.updatePlayerState(socket.id, data);
+  };
+  socket.on('state', handlePlayerState);
+  socket.on('player_update', handlePlayerState);
 
   // Weapon switch notification (Sniper <-> Knife)
   socket.on('player_switch_weapon', (weaponId) => {

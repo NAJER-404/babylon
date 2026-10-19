@@ -574,37 +574,50 @@ export class PlayerController {
     };
   }
 
-  // Compact 30 Hz Network State (Part 1 - heartbeat safe, includes velocity and status)
-  getCompactNetworkState(estimatedServerTime) {
+  // Section B: 30 Hz Send State Payload (Dedicated Web Worker, heartbeat-safe)
+  getSendState(seq = 0, clientTime = Date.now()) {
     const posX = Math.round(this.camera.position.x * 100) / 100;
     const posY = Math.round(this.camera.position.y * 100) / 100;
     const posZ = Math.round(this.camera.position.z * 100) / 100;
-    const pitch = Math.round(this.pitch * 100) / 100;
     const yaw = Math.round(this.yaw * 100) / 100;
+    const pitch = Math.round(this.pitch * 100) / 100;
     const vx = Math.round((this.velocity?.x || 0) * 100) / 100;
-    const vy = Math.round((this.velocity?.y || 0) * 100) / 100;
     const vz = Math.round((this.velocity?.z || 0) * 100) / 100;
 
+    const isKnife = this.weaponSystem?.activeWeaponId === 'knife';
+    const isScoped = (this.scopeOverlay && !isKnife && this.scopeOverlay.isScoped()) ? 1 : 0;
+    const swing = this.weaponSystem?.consumeMeleeSwing ? this.weaponSystem.consumeMeleeSwing() : 0;
+
     return {
+      seq,
+      t: clientTime,
       x: posX,
       y: posY,
       z: posZ,
-      p: [posX, posY, posZ],
+      yaw,
+      pitch,
       vx,
-      vy,
       vz,
-      v: [vx, vy, vz],
+      weapon: isKnife ? 'knife' : 'sniper',
+      crouch: this.isCrouching ? 1 : 0,
+      sprint: this.isSprinting ? 1 : 0,
+      scoped: isScoped,
+      onGround: this.isGrounded ? 1 : 0,
+      swing: swing ? 1 : 0,
+      // Backward compatibility fields
       rx: pitch,
       ry: yaw,
-      r: [pitch, yaw],
-      w: this.weaponSystem?.activeWeaponId === 'knife' ? 1 : 0,
-      s: (this.scopeOverlay && this.weaponSystem?.activeWeaponId === 'sniper' && this.scopeOverlay.isScoped()) ? 1 : 0,
+      w: isKnife ? 1 : 0,
+      s: isScoped,
       c: this.isCrouching ? 1 : 0,
       sp: this.isSprinting ? 1 : 0,
       hp: this.health,
-      a: this.isAlive ? 1 : 0,
-      t: estimatedServerTime || Date.now()
+      alive: this.isAlive ? 1 : 0
     };
+  }
+
+  getCompactNetworkState(estimatedServerTime, seq = 0) {
+    return this.getSendState(seq, estimatedServerTime);
   }
 
   getNetworkState() {

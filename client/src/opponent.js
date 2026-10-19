@@ -7,7 +7,8 @@ import {
   Vector3,
   TransformNode,
   DynamicTexture,
-  Mesh
+  Mesh,
+  HighlightLayer
 } from '@babylonjs/core';
 import { CONFIG } from './config.js';
 
@@ -31,6 +32,12 @@ export class OpponentCharacter {
     this.isScoped = false;
     this.isCrouching = false;
     this.isSprinting = false;
+    this.onGround = true;
+
+    // Telemetry & animation derivation (Section E & J)
+    this.animState = 'idle';
+    this.lastInterpolatedSpeed = 0;
+    this.lastReceivedPos = new Vector3(0, 0, 0);
 
     // Animation timers
     this.walkAnimTimer = 0;
@@ -50,6 +57,9 @@ export class OpponentCharacter {
     // Hitbox debug wireframe state
     this.debugWireframeMat = null;
     this.hitboxesWireframeVisible = false;
+
+    // Visual enhancement (Section I)
+    this.highlightLayer = null;
 
     // Ragdoll state
     this.isRagdoll = false;
@@ -75,13 +85,15 @@ export class OpponentCharacter {
       accentColorHex = CONFIG.COLORS.TEAM_RED_ACCENT;
     }
 
-    // --- MATERIALS ---
+    // --- MATERIALS (Section I: Emissive team glow for distant visibility) ---
     const vestMat = new StandardMaterial(`soldierVest_${this.id}`, this.scene);
     vestMat.diffuseColor = Color3.FromHexString(vestColorHex);
+    vestMat.emissiveColor = Color3.FromHexString(vestColorHex).scale(0.45);
     vestMat.specularColor = new Color3(0.2, 0.2, 0.2);
 
     const accentMat = new StandardMaterial(`soldierAcc_${this.id}`, this.scene);
     accentMat.diffuseColor = Color3.FromHexString(accentColorHex);
+    accentMat.emissiveColor = Color3.FromHexString(accentColorHex).scale(0.5);
 
     const helmetMat = new StandardMaterial(`soldierHelmet_${this.id}`, this.scene);
     helmetMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_HELMET);
@@ -446,12 +458,20 @@ export class OpponentCharacter {
     this.shieldSphere.isVisible = false;
     this.shieldSphere.isPickable = false;
 
-    // Add shadow casters
-    if (this.shadowGenerator) {
-      this.shadowGenerator.addShadowCaster(this.torso);
-      this.shadowGenerator.addShadowCaster(this.head);
-      this.shadowGenerator.addShadowCaster(this.leftLeg);
-      this.shadowGenerator.addShadowCaster(this.rightLeg);
+    // Section I: Babylon HighlightLayer team-colored outline/glow for high visibility
+    try {
+      this.highlightLayer = new HighlightLayer(`hl_opp_${this.id}`, this.scene, {
+        isStroke: true,
+        blurHorizontalSize: 1.0,
+        blurVerticalSize: 1.0
+      });
+      const glowCol = this.playerNumber === 1 ? new Color3(1.0, 0.25, 0.25) : new Color3(0.0, 0.85, 1.0);
+      if (this.torso) this.highlightLayer.addMesh(this.torso, glowCol);
+      if (this.head) this.highlightLayer.addMesh(this.head, glowCol);
+      if (this.leftArm) this.highlightLayer.addMesh(this.leftArm, glowCol);
+      if (this.rightArm) this.highlightLayer.addMesh(this.rightArm, glowCol);
+    } catch (e) {
+      console.warn('[Opponent] HighlightLayer setup fallback:', e);
     }
   }
 
@@ -692,7 +712,7 @@ export class OpponentCharacter {
   pushNetworkUpdate(update) {
     if (!update) return;
 
-    // Support both compact protocol keys (x, y, z, rx, ry, vx, vy, vz, hp, a, pr, w, s, c, t)
+    // Unpack compact protocol keys (x, y, z, yaw, pitch, vx, vz, crouch, sprint, scoped, onGround, swing, weapon)
     // and verbose object/array protocol keys (p, r, v, position, rotation, velocity, health, etc.)
     let posX = this.rootNode.position.x;
     if (update.x !== undefined) posX = Number(update.x);
@@ -710,12 +730,14 @@ export class OpponentCharacter {
     else if (update.position?.z !== undefined) posZ = Number(update.position.z);
 
     let rotY = this.rootNode.rotation.y;
-    if (update.ry !== undefined) rotY = Number(update.ry);
+    if (update.yaw !== undefined) rotY = Number(update.yaw);
+    else if (update.ry !== undefined) rotY = Number(update.ry);
     else if (update.r && update.r.length >= 2) rotY = Number(update.r[1]);
     else if (update.rotation?.y !== undefined) rotY = Number(update.rotation.y);
 
     let pitch = this.aimPitch;
-    if (update.rx !== undefined) pitch = Number(update.rx);
+    if (update.pitch !== undefined) pitch = Number(update.pitch);
+    else if (update.rx !== undefined) pitch = Number(update.rx);
     else if (update.r && update.r.length >= 2) pitch = Number(update.r[0]);
     else if (update.rotation?.x !== undefined) pitch = Number(update.rotation.x);
 
@@ -732,14 +754,20 @@ export class OpponentCharacter {
     else if (update.v && update.v.length >= 3) vz = Number(update.v[2]);
     else if (update.velocity?.z !== undefined) vz = Number(update.velocity.z);
 
-    const isCrouch = update.c !== undefined ? !!update.c : (update.isCrouching !== undefined ? !!update.isCrouching : false);
-    const isScope = update.s !== undefined ? !!update.s : (update.isScoped !== undefined ? !!update.isScoped : false);
-    const activeWep = (update.w !== undefined) ? ((update.w === 1 || update.w === 'knife') ? 'knife' : 'sniper') : update.activeWeapon;
-    const isAlive = update.a !== undefined ? !!update.a : (update.isAlive !== undefined ? !!update.isAlive : true);
+    const isCrouch = update.crouch !== undefined ? !!update.crouch : (update.c !== undefined ? !!update.c : (update.isCrouching !== undefined ? !!update.isCrouching : false));
+    const isSprinting = update.sprint !== undefined ? !!update.sprint : (update.sp !== undefined ? !!update.sp : (update.isSprinting !== undefined ? !!update.isSprinting : false));
+    const isScope = update.scoped !== undefined ? !!update.scoped : (update.s !== undefined ? !!update.s : (update.isScoped !== undefined ? !!update.isScoped : false));
+    const onGround = update.onGround !== undefined ? !!update.onGround : true;
+    const swing = !!update.swing;
+    const activeWep = update.weapon || ((update.w === 1 || update.w === 'knife') ? 'knife' : 'sniper') || update.activeWeapon;
+    const isAlive = update.alive !== undefined ? (update.alive === 1 || update.alive === true) : (update.isAlive !== undefined ? !!update.isAlive : (update.a !== undefined ? !!update.a : true));
     const isProtected = update.pr !== undefined ? !!update.pr : (update.isProtected !== undefined ? !!update.isProtected : false);
     const health = update.hp !== undefined ? Number(update.hp) : (update.health !== undefined ? Number(update.health) : this.health);
 
+    this.lastReceivedPos.set(posX, posY, posZ);
     this.isCrouching = isCrouch;
+    this.isSprinting = isSprinting;
+    this.onGround = onGround;
     const timestamp = update.t || update.timestamp || Date.now();
 
     this.positionBuffer.push({
@@ -749,13 +777,23 @@ export class OpponentCharacter {
       vx,
       vy,
       vz,
+      yaw: rotY,
       rotY,
       pitch,
+      sprint: isSprinting,
+      crouch: isCrouch,
+      scoped: isScope,
+      onGround,
+      swing,
       timestamp
     });
 
     if (this.positionBuffer.length > 30) {
       this.positionBuffer.shift();
+    }
+
+    if (swing) {
+      this.triggerMeleeVisual();
     }
 
     if (health !== this.health) {
@@ -777,6 +815,29 @@ export class OpponentCharacter {
     }
   }
 
+  // Snap directly to newest snapshot (used on tab visibility restore - Section D)
+  snapToLatest() {
+    if (this.positionBuffer.length === 0) return;
+    const latest = this.positionBuffer[this.positionBuffer.length - 1];
+    this.rootNode.position.set(latest.x, latest.y, latest.z);
+    this.rootNode.rotation.y = latest.yaw !== undefined ? latest.yaw : latest.rotY;
+    this.position.copyFrom(this.rootNode.position);
+    this.rotationY = this.rootNode.rotation.y;
+    this.targetPosition.copyFrom(this.rootNode.position);
+    this.targetRotationY = this.rotationY;
+    if (latest.pitch !== undefined) this.aimPitch = latest.pitch;
+  }
+
+  // Process latest snapshot in background worker timer when page is hidden (Section D)
+  applyBackgroundTick() {
+    if (this.positionBuffer.length === 0) return;
+    const latest = this.positionBuffer[this.positionBuffer.length - 1];
+    this.rootNode.position.set(latest.x, latest.y, latest.z);
+    this.rootNode.rotation.y = latest.yaw !== undefined ? latest.yaw : latest.rotY;
+    this.position.copyFrom(this.rootNode.position);
+    this.rotationY = this.rootNode.rotation.y;
+  }
+
   update(deltaTime, currentSpeed = 0) {
     if (!this.isAlive && !this.isRagdoll) return;
 
@@ -784,6 +845,7 @@ export class OpponentCharacter {
 
     // Ragdoll physics simulation
     if (this.isRagdoll) {
+      this.animState = 'ragdoll';
       this.ragdollTime += dt;
       this.ragdollParts.forEach(part => {
         part.pos.x += part.vx * dt;
@@ -848,37 +910,38 @@ export class OpponentCharacter {
       14 * dt
     );
 
-    // Adaptive Interpolation from positionBuffer with Clock Offset and Extrapolation
+    // Section D: Adaptive Interpolation from snapshotBuffer
     let moveSpeed = currentSpeed;
+    const estimatedServerTime = Date.now() + (this.serverClockOffset || 0);
+    const renderTimestamp = estimatedServerTime - 100; // 100 ms target delay
 
     if (this.positionBuffer.length >= 2) {
-      const interpDelay = CONFIG.NETWORK?.INTERPOLATION_OFFSET_MS || 120;
-      const maxExtrap = (CONFIG.NETWORK?.MAX_EXTRAPOLATION_MS || 200) / 1000;
-      const estimatedServerTime = (Date.now() + (this.serverClockOffset || 0));
-
       const oldest = this.positionBuffer[0];
       const newest = this.positionBuffer[this.positionBuffer.length - 1];
 
-      // Clock sanity guard: if renderTimestamp is wildly adrift, anchor to newest snapshot
-      let renderTimestamp = estimatedServerTime - interpDelay;
-      if (renderTimestamp < oldest.timestamp - 500 || renderTimestamp > newest.timestamp + 500) {
-        renderTimestamp = newest.timestamp - interpDelay;
-      }
-
-      if (renderTimestamp <= oldest.timestamp) {
-        this.targetPosition.set(oldest.x, oldest.y, oldest.z);
-        this.targetRotationY = oldest.rotY;
-        if (oldest.pitch !== undefined) this.aimPitch = oldest.pitch;
+      // If buffer is more than 250 ms behind target, snap directly to newest snapshot
+      if (renderTimestamp - newest.timestamp > 250) {
+        this.targetPosition.set(newest.x, newest.y, newest.z);
+        this.targetRotationY = newest.yaw !== undefined ? newest.yaw : newest.rotY;
+        if (newest.pitch !== undefined) this.aimPitch = newest.pitch;
+        this.rootNode.position.copyFrom(this.targetPosition);
+        this.rootNode.rotation.y = this.targetRotationY;
       } else if (renderTimestamp >= newest.timestamp) {
-        const extraSec = Math.min(maxExtrap, Math.max(0, (renderTimestamp - newest.timestamp) / 1000));
+        // Buffer ran dry: extrapolate for at most 200 ms using velocity, then hold
+        const extraSec = Math.min(0.20, Math.max(0, (renderTimestamp - newest.timestamp) / 1000));
         this.targetPosition.set(
           newest.x + (newest.vx || 0) * extraSec,
           newest.y + (newest.vy || 0) * extraSec,
           newest.z + (newest.vz || 0) * extraSec
         );
-        this.targetRotationY = newest.rotY;
+        this.targetRotationY = newest.yaw !== undefined ? newest.yaw : newest.rotY;
         if (newest.pitch !== undefined) this.aimPitch = newest.pitch;
+      } else if (renderTimestamp <= oldest.timestamp) {
+        this.targetPosition.set(oldest.x, oldest.y, oldest.z);
+        this.targetRotationY = oldest.yaw !== undefined ? oldest.yaw : oldest.rotY;
+        if (oldest.pitch !== undefined) this.aimPitch = oldest.pitch;
       } else {
+        // Interpolate between surrounding snapshots
         let p0 = oldest;
         let p1 = newest;
         for (let i = 0; i < this.positionBuffer.length - 1; i++) {
@@ -893,13 +956,14 @@ export class OpponentCharacter {
         }
 
         const totalSpan = p1.timestamp - p0.timestamp;
-        let alpha = totalSpan > 0 ? (renderTimestamp - p0.timestamp) / totalSpan : 1.0;
-        alpha = Math.max(0, Math.min(1.0, alpha));
+        const alpha = totalSpan > 0 ? Math.max(0, Math.min(1.0, (renderTimestamp - p0.timestamp) / totalSpan)) : 1.0;
 
         this.targetPosition.x = p0.x + (p1.x - p0.x) * alpha;
         this.targetPosition.y = p0.y + (p1.y - p0.y) * alpha;
         this.targetPosition.z = p0.z + (p1.z - p0.z) * alpha;
-        this.targetRotationY = this.lerpAngle(p0.rotY, p1.rotY, alpha);
+        const y0 = p0.yaw !== undefined ? p0.yaw : p0.rotY;
+        const y1 = p1.yaw !== undefined ? p1.yaw : p1.rotY;
+        this.targetRotationY = this.lerpAngle(y0, y1, alpha);
         if (p1.pitch !== undefined && p0.pitch !== undefined) {
           this.aimPitch = p0.pitch + (p1.pitch - p0.pitch) * alpha;
         }
@@ -909,7 +973,8 @@ export class OpponentCharacter {
         this.targetPosition.x - this.rootNode.position.x,
         this.targetPosition.z - this.rootNode.position.z
       );
-      if (distToTarget > 12.0) {
+
+      if (distToTarget > 10.0) {
         // Instant teleport/spawn snap
         this.rootNode.position.copyFrom(this.targetPosition);
         this.rootNode.rotation.y = this.targetRotationY;
@@ -919,24 +984,23 @@ export class OpponentCharacter {
         const dz = this.targetPosition.z - this.rootNode.position.z;
         moveSpeed = Math.hypot(dx, dz) / Math.max(0.001, dt);
 
-        const smoothFactor = Math.min(1.0, 20 * dt);
+        const smoothFactor = Math.min(1.0, 25 * dt);
         this.rootNode.position.x += dx * smoothFactor;
         this.rootNode.position.y += dy * smoothFactor;
         this.rootNode.position.z += dz * smoothFactor;
-        this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 15 * dt);
+        this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 20 * dt);
       }
     } else if (this.positionBuffer.length === 1) {
-      // Immediate single-snapshot application (never stalls waiting for second packet)
       const single = this.positionBuffer[0];
       this.targetPosition.set(single.x, single.y, single.z);
-      this.targetRotationY = single.rotY;
+      this.targetRotationY = single.yaw !== undefined ? single.yaw : single.rotY;
       if (single.pitch !== undefined) this.aimPitch = single.pitch;
 
       const distToTarget = Math.hypot(
         this.targetPosition.x - this.rootNode.position.x,
         this.targetPosition.z - this.rootNode.position.z
       );
-      if (distToTarget > 12.0) {
+      if (distToTarget > 10.0) {
         this.rootNode.position.copyFrom(this.targetPosition);
         this.rootNode.rotation.y = this.targetRotationY;
       } else {
@@ -945,16 +1009,31 @@ export class OpponentCharacter {
         const dz = this.targetPosition.z - this.rootNode.position.z;
         moveSpeed = Math.hypot(dx, dz) / Math.max(0.001, dt);
 
-        const smoothFactor = Math.min(1.0, 20 * dt);
+        const smoothFactor = Math.min(1.0, 25 * dt);
         this.rootNode.position.x += dx * smoothFactor;
         this.rootNode.position.y += dy * smoothFactor;
         this.rootNode.position.z += dz * smoothFactor;
-        this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 15 * dt);
+        this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 20 * dt);
       }
     }
 
-    // Procedural Animation System
-    const isMoving = moveSpeed > 0.35;
+    // Section E: Animation derived from actual speed & synced flags
+    this.lastInterpolatedSpeed = moveSpeed;
+    if (this.meleeSwingTimer > 0) {
+      this.animState = 'swing';
+    } else if (!this.onGround) {
+      this.animState = 'air';
+    } else if (this.isCrouching) {
+      this.animState = moveSpeed > 0.2 ? 'crouch-walk' : 'crouch';
+    } else if (this.isSprinting || moveSpeed >= 5.5) {
+      this.animState = 'sprint';
+    } else if (moveSpeed >= 0.2) {
+      this.animState = 'walk';
+    } else {
+      this.animState = 'idle';
+    }
+
+    const isMoving = moveSpeed > 0.2;
     const isKnife = this.activeWeapon === 'knife';
 
     if (isMoving) {
@@ -999,8 +1078,36 @@ export class OpponentCharacter {
       }
     }
 
+    // Section I: Floating name tag scaling with distance & minimum on-screen size
+    if (this.scene.activeCamera) {
+      const camPos = this.scene.activeCamera.position;
+      const dist = Vector3.Distance(camPos, this.rootNode.position);
+      if (this.nameTagPlane) {
+        const tagScale = Math.max(1.0, Math.min(3.5, dist / 15.0));
+        this.nameTagPlane.scaling.set(tagScale, tagScale, tagScale);
+        this.nameTagPlane.position.y = (2.45 - this.crouchFactor * 0.70) + (tagScale - 1.0) * 0.45;
+      }
+      if (dist > 25.0) {
+        const charScale = Math.min(1.35, 1.0 + (dist - 25.0) / 100.0);
+        this.rootNode.scaling.set(charScale, charScale, charScale);
+      } else {
+        this.rootNode.scaling.set(1.0, 1.0, 1.0);
+      }
+    }
+
     this.position.copyFrom(this.rootNode.position);
     this.rotationY = this.rootNode.rotation.y;
+  }
+
+  // Telemetry strings for Section J Debug Overlay
+  getDebugPosString() {
+    const rcv = this.lastReceivedPos ? `${this.lastReceivedPos.x.toFixed(1)},${this.lastReceivedPos.z.toFixed(1)}` : '--';
+    const rend = `${this.rootNode.position.x.toFixed(1)},${this.rootNode.position.z.toFixed(1)}`;
+    return `Rcv:[${rcv}] Rend:[${rend}]`;
+  }
+
+  getDebugAnimString() {
+    return `${this.animState} (${(this.lastInterpolatedSpeed || 0).toFixed(1)} u/s)`;
   }
 
   lerpAngle(a, b, t) {
@@ -1015,29 +1122,31 @@ export class OpponentCharacter {
     this.rootNode.rotation.y = rotY;
     this.position.copyFrom(this.rootNode.position);
     this.rotationY = rotY;
+    this.targetPosition.copyFrom(this.rootNode.position);
+    this.targetRotationY = rotY;
     this.positionBuffer = [];
   }
 
   setVisible(visible) {
     this.isAlive = visible;
-    this.torso.isVisible = visible;
-    this.head.isVisible = visible;
-    this.leftArm.isVisible = visible;
-    this.rightArm.isVisible = visible;
-    this.leftLeg.isVisible = visible;
-    this.rightLeg.isVisible = visible;
-    this.headHitbox.isPickable = visible;
-    this.bodyHitbox.isPickable = visible;
-    this.legsHitbox.isPickable = visible;
+    if (this.torso) this.torso.isVisible = visible;
+    if (this.head) this.head.isVisible = visible;
+    if (this.leftArm) this.leftArm.isVisible = visible;
+    if (this.rightArm) this.rightArm.isVisible = visible;
+    if (this.leftLeg) this.leftLeg.isVisible = visible;
+    if (this.rightLeg) this.rightLeg.isVisible = visible;
+    if (this.headHitbox) this.headHitbox.isPickable = visible;
+    if (this.bodyHitbox) this.bodyHitbox.isPickable = visible;
+    if (this.legsHitbox) this.legsHitbox.isPickable = visible;
 
     if (this.nameTagPlane) this.nameTagPlane.isVisible = visible;
 
     const isSniper = this.activeWeapon === 'sniper';
-    this.sniperRifleMesh.setEnabled(visible && isSniper);
-    this.combatKnifeMesh.setEnabled(visible && !isSniper);
+    if (this.sniperRifleMesh) this.sniperRifleMesh.setEnabled(visible && isSniper);
+    if (this.combatKnifeMesh) this.combatKnifeMesh.setEnabled(visible && !isSniper);
 
     if (!visible) {
-      this.shieldSphere.isVisible = false;
+      if (this.shieldSphere) this.shieldSphere.isVisible = false;
       if (this.muzzleFlash) this.muzzleFlash.isVisible = false;
       if (this.scopeGlintMesh) this.scopeGlintMesh.isVisible = false;
     }
@@ -1051,6 +1160,12 @@ export class OpponentCharacter {
   }
 
   dispose() {
+    if (this.highlightLayer) {
+      try {
+        this.highlightLayer.dispose();
+      } catch (e) {}
+      this.highlightLayer = null;
+    }
     this.rootNode.dispose();
   }
 }

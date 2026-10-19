@@ -35,6 +35,7 @@ export class WeaponSystem {
 
     // Knife attack state
     this.isMeleeSwinging = false;
+    this.justSwungMelee = false;
     this.meleeStartTime = 0;
     this.lastMeleeTime = 0;
 
@@ -413,6 +414,7 @@ export class WeaponSystem {
     const now = performance.now();
     this.lastMeleeTime = now;
     this.isMeleeSwinging = true;
+    this.justSwungMelee = true;
     this.meleeStartTime = now;
 
     this.audio.playKnifeSwing();
@@ -466,6 +468,12 @@ export class WeaponSystem {
     }
 
     return hitResult;
+  }
+
+  consumeMeleeSwing() {
+    const swung = this.justSwungMelee;
+    this.justSwungMelee = false;
+    return swung ? 1 : 0;
   }
 
   performSniperShot(playerMovementState = {}) {

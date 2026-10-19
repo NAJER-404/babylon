@@ -140,14 +140,36 @@ export class Game {
       };
 
       this.player.onPointerLockChangeCallback = (isLocked) => {
-        if (!isLocked && this.mode !== GAME_MODE.NONE && !this.ui.isMenuOpen) {
+        if (!isLocked) {
           inputManager.clearAll();
           if (this.scopeOverlay) this.scopeOverlay.forceReset();
-          this.ui.showPauseMenu();
-        } else if (isLocked) {
-          this.ui.hidePauseMenu();
+          if (this.mode === GAME_MODE.ONLINE) {
+            // Section F: Never pause online matches on focus loss
+            this.ui.showResumeBanner();
+          } else if (this.mode === GAME_MODE.PRACTICE && !this.ui.isMenuOpen) {
+            this.ui.showPauseMenu();
+          }
+        } else {
+          this.ui.hideResumeBanner();
+          if (this.mode === GAME_MODE.PRACTICE) {
+            this.ui.hidePauseMenu();
+          }
         }
       };
+
+      // Click resume banner to regain pointer lock in online matches (Section F)
+      document.getElementById('resume-banner')?.addEventListener('click', () => {
+        if (this.mode === GAME_MODE.ONLINE && !this.ui.isMenuOpen) {
+          this.player.requestPointerLock();
+        }
+      });
+
+      // Section D: Snap remote character to latest snapshot on tab restore
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && this.opponent && this.mode === GAME_MODE.ONLINE) {
+          this.opponent.snapToLatest();
+        }
+      });
 
       this.player.onDamageCallback = (dmg, attackerPos, hitPart, newHp) => {
         this.ui.updateHealth(newHp);
@@ -252,6 +274,7 @@ export class Game {
 
       onResumeGame: () => {
         this.ui.hidePauseMenu();
+        this.ui.hideResumeBanner();
         this.player.requestPointerLock();
       },
 
@@ -332,22 +355,20 @@ export class Game {
     this.network.onWorldState = (data) => {
       if (this.mode !== GAME_MODE.ONLINE || !data?.players) return;
 
-      const myId = this.network.socket?.id;
-      const myPlayerNum = this.player?.playerNumber || this.network.playerNumber;
+      const myId = this.localId || this.network.localId || this.network.socket?.id;
+      const remoteId = this.remoteId || this.network.remoteId;
 
       for (const p of data.players) {
-        const pId = p.socketId || p.id;
-        const pNum = p.playerNumber || p.num;
+        const pId = p.id || p.socketId;
 
-        const isLocalPlayer = (myId && pId === myId) || (myPlayerNum && pNum === myPlayerNum);
-
-        if (!isLocalPlayer && this.opponent) {
+        // Section A: Snapshot for remoteId goes ONLY to remote opponent; localId goes ONLY to local player
+        if (remoteId && pId === remoteId && this.opponent) {
           this.opponent.setServerClockOffset(this.network.serverClockOffset);
           if (!p.timestamp && !p.t) {
-            p.timestamp = data.t || data.timestamp || Date.now();
+            p.timestamp = data.serverTime || data.t || data.timestamp || Date.now();
           }
           this.opponent.pushNetworkUpdate(p);
-        } else if (isLocalPlayer) {
+        } else if (pId === myId && this.player) {
           const hp = p.health !== undefined ? p.health : p.hp;
           if (hp !== undefined && hp !== this.player.health) {
             this.player.health = hp;
@@ -430,6 +451,10 @@ export class Game {
         this.bulletCam.complete();
       }
       this.player.setInputLocked(false);
+      // Section D: Ensure remote character is visible and active after kill cam
+      if (this.opponent) {
+        this.opponent.setVisible(true);
+      }
 
       if (this.player.playerNumber === 1) {
         this.playerScore = data.scores.p1Kills;
@@ -578,9 +603,11 @@ export class Game {
     }
     this.botAI = null;
 
-    const myId = this.network.socket?.id;
-    const myPlayerNum = this.network.playerNumber;
+    // Section A: Identity
+    this.localId = matchData.localId || this.network.localId || this.network.socket?.id;
+    this.remoteId = matchData.remoteId || this.network.remoteId;
 
+    const myId = this.localId;
     let myInfo = null;
     let oppInfo = null;
 
@@ -588,9 +615,8 @@ export class Game {
       myInfo = matchData.players.find(p => (p.socketId && p.socketId === myId) || (p.id && p.id === myId));
       oppInfo = matchData.players.find(p => (p.socketId && p.socketId !== myId) || (p.id && p.id !== myId));
     }
-    if (!myInfo && myPlayerNum && matchData.players) {
-      myInfo = matchData.players.find(p => (p.playerNumber && p.playerNumber === myPlayerNum) || (p.num && p.num === myPlayerNum));
-      oppInfo = matchData.players.find(p => (p.playerNumber && p.playerNumber !== myPlayerNum) || (p.num && p.num !== myPlayerNum));
+    if (!oppInfo && this.remoteId && matchData.players) {
+      oppInfo = matchData.players.find(p => (p.socketId && p.socketId === this.remoteId) || (p.id && p.id === this.remoteId));
     }
     if (!myInfo && matchData.players) {
       myInfo = matchData.players[0];
@@ -598,11 +624,12 @@ export class Game {
     }
 
     const mySpawn = myInfo?.spawn || CONFIG.GAME.SPAWNS[0];
-    const myNum = myInfo?.playerNumber || myInfo?.num || myPlayerNum || 1;
+    const myNum = myInfo?.playerNumber || myInfo?.num || (myInfo?.socketId === matchData.players?.[0]?.socketId ? 1 : 2);
     this.player.playerNumber = myNum;
     this.player.spawnAt(mySpawn, myNum);
 
-    const oppId = oppInfo?.socketId || oppInfo?.id || 'opponent_player';
+    const oppId = this.remoteId || oppInfo?.socketId || oppInfo?.id || 'opponent_player';
+    this.remoteId = oppId;
     const oppNum = oppInfo?.playerNumber || oppInfo?.num || (myNum === 1 ? 2 : 1);
     const oppName = oppInfo?.name || 'Opponent';
     const oppSpawn = oppInfo?.spawn || CONFIG.GAME.SPAWNS[1];
@@ -627,12 +654,19 @@ export class Game {
       this.opponent.setHitboxesWireframe(true);
     }
 
-    // Launch background 30 Hz send loop (dedicated Web Worker, immune to tab focus loss)
+    // Section B & D: Launch background 30 Hz send loop (dedicated Web Worker, immune to tab focus loss)
+    this.sendSeq = 0;
     this.network.startSendLoop(() => {
       if (this.mode === GAME_MODE.ONLINE && this.player) {
-        return this.player.getCompactNetworkState(this.network.getEstimatedServerTime());
+        this.sendSeq = (this.sendSeq || 0) + 1;
+        return this.player.getSendState(this.sendSeq, Date.now());
       }
       return null;
+    }, () => {
+      // Process newest snapshot when tab is hidden so state stays fresh
+      if (document.hidden && this.mode === GAME_MODE.ONLINE && this.opponent) {
+        this.opponent.applyBackgroundTick();
+      }
     });
 
     this.weapon.resetAmmo();
@@ -640,7 +674,6 @@ export class Game {
     this.ui.updateScore(0, 0, 'YOU', oppName.toUpperCase());
     this.ui.updateKillCounter(0, CONFIG.GAME.SCORE_TO_WIN);
     this.ui.showHUD();
-    this.ui.startMatchTimer();
 
     this.player.requestPointerLock();
   }
@@ -896,27 +929,33 @@ export class Game {
         this.opponent.update(scaledDt);
       }
 
-      // 10. Fixed 30 Hz Network updates (using compact protocol)
-      const sendInterval = 1000 / (CONFIG.NETWORK?.SEND_RATE_HZ || 30);
-      if (this.mode === GAME_MODE.ONLINE && this.player.isAlive && !this.bulletCam?.isActive) {
-        this.networkUpdateTimer += rawDt;
-        if (this.networkUpdateTimer >= sendInterval) {
-          this.networkUpdateTimer = 0;
-          this.network.sendPlayerUpdate(
-            this.player.getCompactNetworkState(this.network.getEstimatedServerTime())
-          );
-        }
+      // 10. Server-Authoritative Match Timer in Online Mode (Section G)
+      if (this.mode === GAME_MODE.ONLINE && this.network.matchStartServerTime) {
+        this.ui.updateMatchTimerServerAuthoritative(
+          this.network.getEstimatedServerTime(),
+          this.network.matchStartServerTime,
+          this.network.matchDuration || 600
+        );
       }
 
-      // 11. Performance & Telemetry Debug Overlay Update (every 200ms)
+      // 11. Performance & Telemetry Debug Overlay Update (Section J)
       this.debugUpdateTimer += rawDt;
-      if (this.debugUpdateTimer >= 200) {
+      if (this.debugUpdateTimer >= 150) {
         this.debugUpdateTimer = 0;
         this.ui.updateDebugMetrics({
-          fps: this.engine.getFps(),
+          localId: this.localId || this.network.localId || '--',
+          remoteId: this.remoteId || this.network.remoteId || '--',
+          sendRate: this.network.sendRate || 0,
+          snapRate: this.network.snapshotsPerSecond || 0,
+          snapAge: this.network.getLastSnapshotAgeMs(),
+          remotePos: this.opponent ? this.opponent.getDebugPosString() : '--',
+          remoteAnim: this.opponent ? this.opponent.getDebugAnimString() : '--',
           ping: this.network.smoothedPing,
           maxPing: this.network.maxPing,
           jitter: this.network.jitter,
+          clockOffset: this.network.serverClockOffset,
+          matchTime: this.ui.hud.timerVal?.textContent || '00:00',
+          fps: this.engine.getFps(),
           serverTick: 30,
           ppsIn: this.network.ppsIn,
           ppsOut: this.network.ppsOut,

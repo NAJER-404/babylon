@@ -33,7 +33,16 @@
   <!-- 3D Babylon.js Canvas -->
   <canvas id="renderCanvas"></canvas>
 
-  <!-- Performance & Telemetry Debug Overlay (Toggle with F3) -->
+  <!-- Non-blocking Click to Resume Control Banner (Section F) -->
+  <div id="resume-banner" class="resume-banner hidden">
+    <div class="resume-banner-content">
+      <span class="resume-banner-icon">🎯</span>
+      <span class="resume-banner-text">CLICK GAME TO RESUME CONTROL</span>
+      <span class="resume-banner-sub">ONLINE 1V1 IN PROGRESS</span>
+    </div>
+  </div>
+
+  <!-- Performance & Telemetry Debug Overlay (Section J - Toggle with F3) -->
   <div id="debug-overlay" class="debug-overlay hidden">
     <div class="debug-header">
       <span class="debug-title">DEBUG & TELEMETRY [F3]</span>
@@ -41,13 +50,21 @@
     </div>
 
     <div class="debug-grid">
-      <div class="debug-row"><span>PING (RTT):</span> <span id="debug-ping" class="debug-val">0ms (max 0ms)</span></div>
-      <div class="debug-row"><span>JITTER:</span> <span id="debug-jitter" class="debug-val">0ms</span></div>
+      <div class="debug-row"><span>LOCAL ID:</span> <span id="debug-local-id" class="debug-val">--</span></div>
+      <div class="debug-row"><span>REMOTE ID:</span> <span id="debug-remote-id" class="debug-val">--</span></div>
+      <div class="debug-row"><span>MY SEND RATE:</span> <span id="debug-send-rate" class="debug-val">0 pps</span></div>
+      <div class="debug-row"><span>SNAPSHOTS / SEC:</span> <span id="debug-snap-rate" class="debug-val">0 /s</span></div>
+      <div class="debug-row"><span>LAST SNAPSHOT AGE:</span> <span id="debug-snap-age" class="debug-val">0 ms</span></div>
+      <div class="debug-row"><span>REMOTE POS (RCV / REND):</span> <span id="debug-remote-pos" class="debug-val">--</span></div>
+      <div class="debug-row"><span>REMOTE ANIM & SPEED:</span> <span id="debug-remote-anim" class="debug-val">idle (0.0 u/s)</span></div>
+      <div class="debug-row"><span>PING (RTT):</span> <span id="debug-ping" class="debug-val">--</span></div>
+      <div class="debug-row"><span>CLOCK OFFSET:</span> <span id="debug-clock-offset" class="debug-val">0 ms</span></div>
+      <div class="debug-row"><span>MATCH TIME:</span> <span id="debug-match-time" class="debug-val">00:00</span></div>
       <div class="debug-row"><span>FPS:</span> <span id="debug-fps" class="debug-val">60</span></div>
       <div class="debug-row"><span>SERVER TICK:</span> <span id="debug-server-tick" class="debug-val">30 Hz</span></div>
       <div class="debug-row"><span>PACKETS (IN/OUT):</span> <span id="debug-packet-rate" class="debug-val">0 / 0 pps</span></div>
       <div class="debug-row"><span>WEAPON:</span> <span id="debug-weapon" class="debug-val">SNIPER</span></div>
-      <div class="debug-row"><span>SPEED:</span> <span id="debug-speed" class="debug-val">0.00 u/s</span></div>
+      <div class="debug-row"><span>MY SPEED:</span> <span id="debug-speed" class="debug-val">0.00 u/s</span></div>
       <div class="debug-row"><span>KILL CAM STATE:</span> <span id="debug-killcam-state" class="debug-val">IDLE</span></div>
       <div class="debug-row"><span>TIME SCALE:</span> <span id="debug-timescale" class="debug-val">1.00x</span></div>
     </div>
