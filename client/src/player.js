@@ -575,10 +575,14 @@ export class PlayerController {
   }
 
   // Section B: 30 Hz Send State Payload (Dedicated Web Worker, heartbeat-safe)
+    // Section B: 30 Hz Send State Payload (Dedicated Web Worker, heartbeat-safe)
   getSendState(seq = 0, clientTime = Date.now()) {
-    const posX = Math.round(this.camera.position.x * 100) / 100;
-    const posY = Math.round(this.camera.position.y * 100) / 100;
-    const posZ = Math.round(this.camera.position.z * 100) / 100;
+    // FIX: Send the FEET position, not the camera eye position
+    const feetY = this.colliderMesh.position.y - (CONFIG.PLAYER.COLLIDER_HEIGHT / 2);
+    
+    const posX = Math.round(this.colliderMesh.position.x * 100) / 100;
+    const posY = Math.round(feetY * 100) / 100; 
+    const posZ = Math.round(this.colliderMesh.position.z * 100) / 100;
     const yaw = Math.round(this.yaw * 100) / 100;
     const pitch = Math.round(this.pitch * 100) / 100;
     const vx = Math.round((this.velocity?.x || 0) * 100) / 100;
@@ -592,7 +596,7 @@ export class PlayerController {
       seq,
       t: clientTime,
       x: posX,
-      y: posY,
+      y: posY, // Now sending feet position!
       z: posZ,
       yaw,
       pitch,

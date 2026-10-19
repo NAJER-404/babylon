@@ -29,18 +29,12 @@ export class BulletCam {
     this.enabled = true;
     this.camState = BULLET_CAM_STATE.IDLE;
 
-    this.bulletCamera = new UniversalCamera(
-      'bulletCam',
-      new Vector3(0, 2, 0),
-      this.scene
-    );
+    this.bulletCamera = new UniversalCamera('bulletCam', new Vector3(0, 2, 0), this.scene);
     this.bulletCamera.minZ = 0.1;
     this.bulletCamera.maxZ = 1200;
     this.bulletCamera.fov = 1.32;
     this.bulletCamera.inputs.clear();
-    if (this.playerCamera) {
-      this.scene.activeCamera = this.playerCamera;
-    }
+    if (this.playerCamera) this.scene.activeCamera = this.playerCamera;
 
     this.perspective = 'shooter';
     this.weaponType = 'sniper';
@@ -78,38 +72,24 @@ export class BulletCam {
 
   createPooledBullet() {
     this.bulletRoot = new TransformNode('pooledBulletRoot', this.scene);
-
     const bulletBody = MeshBuilder.CreateCylinder('bulletBody', { height: 0.14, diameter: 0.038, tessellation: 12 }, this.scene);
-    bulletBody.parent = this.bulletRoot;
-    bulletBody.rotation.x = Math.PI / 2;
+    bulletBody.parent = this.bulletRoot; bulletBody.rotation.x = Math.PI / 2;
     const bulletMat = new StandardMaterial('bulletMat', this.scene);
-    bulletMat.diffuseColor = new Color3(0.85, 0.55, 0.2);
-    bulletMat.emissiveColor = new Color3(0.2, 0.1, 0.02);
-    bulletMat.specularColor = new Color3(1.0, 0.85, 0.5);
-    bulletBody.material = bulletMat;
-    bulletBody.isPickable = false;
+    bulletMat.diffuseColor = new Color3(0.85, 0.55, 0.2); bulletMat.emissiveColor = new Color3(0.2, 0.1, 0.02); bulletMat.specularColor = new Color3(1.0, 0.85, 0.5);
+    bulletBody.material = bulletMat; bulletBody.isPickable = false;
 
     const bulletTip = MeshBuilder.CreateCylinder('bulletTip', { height: 0.09, diameterTop: 0.004, diameterBottom: 0.038, tessellation: 12 }, this.scene);
-    bulletTip.parent = this.bulletRoot;
-    bulletTip.rotation.x = Math.PI / 2;
-    bulletTip.position.z = 0.10;
-    bulletTip.material = bulletMat;
-    bulletTip.isPickable = false;
+    bulletTip.parent = this.bulletRoot; bulletTip.rotation.x = Math.PI / 2; bulletTip.position.z = 0.10; bulletTip.material = bulletMat; bulletTip.isPickable = false;
 
     const shockwave = MeshBuilder.CreateTorus('shockwave', { diameter: 0.12, thickness: 0.012, tessellation: 16 }, this.scene);
-    shockwave.parent = this.bulletRoot;
-    shockwave.position.z = -0.06;
+    shockwave.parent = this.bulletRoot; shockwave.position.z = -0.06;
     const shockMat = new StandardMaterial('shockMat', this.scene);
-    shockMat.diffuseColor = new Color3(1.0, 0.95, 0.6);
-    shockMat.emissiveColor = new Color3(1.0, 0.9, 0.5);
-    shockMat.alpha = 0.75;
-    shockwave.material = shockMat;
-    shockwave.isPickable = false;
+    shockMat.diffuseColor = new Color3(1.0, 0.95, 0.6); shockMat.emissiveColor = new Color3(1.0, 0.9, 0.5); shockMat.alpha = 0.75;
+    shockwave.material = shockMat; shockwave.isPickable = false;
 
     this.trailPoints = [new Vector3(0, 0, 0), new Vector3(0, 0, -2.5)];
     this.trailMesh = MeshBuilder.CreateLines('bulletTrail', { points: this.trailPoints, updatable: true }, this.scene);
-    this.trailMesh.color = new Color3(1.0, 0.98, 0.85);
-    this.trailMesh.isPickable = false;
+    this.trailMesh.color = new Color3(1.0, 0.98, 0.85); this.trailMesh.isPickable = false;
 
     this.bulletRoot.setEnabled(false);
     this.trailMesh.setEnabled(false);
@@ -146,7 +126,6 @@ export class BulletCam {
   }
 
   setupInputListener() {
-    // Space to skip is still bound, even though the text is gone
     window.addEventListener('keydown', (e) => {
       if (this.isActive && e.code === 'Space') {
         this.skipVisual();
@@ -176,9 +155,7 @@ export class BulletCam {
           this.trailMesh?.setEnabled(false);
         }
       }, 150);
-    } catch (e) {
-      console.warn('[BulletCam] Prewarm notice:', e);
-    }
+    } catch (e) {}
   }
 
   start(perspective, startPos, targetHitPos, victimCharacter, isHeadshot, killInfo = {}, onComplete = null) {
@@ -202,11 +179,7 @@ export class BulletCam {
         perspective,
         startPos: startPos.clone ? startPos.clone() : new Vector3(startPos.x, startPos.y, startPos.z),
         targetHitPos: targetHitPos.clone ? targetHitPos.clone() : new Vector3(targetHitPos.x, targetHitPos.y, targetHitPos.z),
-        victimCharacter,
-        isHeadshot,
-        killInfo,
-        onComplete,
-        enqueuedAt: performance.now()
+        victimCharacter, isHeadshot, killInfo, onComplete, enqueuedAt: performance.now()
       });
       return;
     }
@@ -220,9 +193,7 @@ export class BulletCam {
       this.stateStartTime = performance.now();
 
       this.clearWatchdog();
-      this.watchdogTimerId = setTimeout(() => {
-        this.complete();
-      }, 5000);
+      this.watchdogTimerId = setTimeout(() => { this.complete(); }, 6000); // Extended watchdog
 
       this.perspective = perspective || 'shooter';
       this.weaponType = killInfo?.weaponType || 'sniper';
@@ -248,26 +219,15 @@ export class BulletCam {
       this.lateTrimFactor = 1.0;
       if (packetAgeMs > 400) this.lateTrimFactor = Math.min(3.0, 1.0 + (packetAgeMs - 400) / 300);
 
-      if (this.bannerText) {
-        this.bannerText.textContent = this.perspective === 'victim' ? 'OPPONENT ELIMINATION REPLAY' : 'CINEMATIC KILL CAM';
-      }
-
+      if (this.bannerText) this.bannerText.textContent = this.perspective === 'victim' ? 'OPPONENT ELIMINATION REPLAY' : 'CINEMATIC KILL CAM';
       const distMeters = Math.max(1, Math.round(this.totalDistance));
-      if (this.distTag) {
-        this.distTag.textContent = this.weaponType === 'knife' ? 'MELEE STRIKE' : `${distMeters} METERS`;
-      }
-
+      if (this.distTag) this.distTag.textContent = this.weaponType === 'knife' ? 'MELEE STRIKE' : `${distMeters} METERS`;
       if (this.targetLabel) {
-        if (this.weaponType === 'knife') {
-          this.targetLabel.textContent = this.perspective === 'victim' ? '☠ ELIMINATED BY TACTICAL COMBAT KNIFE' : '⚔ LETHAL COMBAT KNIFE STRIKE';
-        } else {
-          this.targetLabel.textContent = this.isHeadshot ? '🎯 CRITICAL HEADSHOT ELIMINATION' : '☠ ONE-SHOT SNIPER ELIMINATION';
-        }
+        if (this.weaponType === 'knife') this.targetLabel.textContent = this.perspective === 'victim' ? '☠ ELIMINATED BY TACTICAL COMBAT KNIFE' : '⚔ LETHAL COMBAT KNIFE STRIKE';
+        else this.targetLabel.textContent = this.isHeadshot ? '🎯 CRITICAL HEADSHOT ELIMINATION' : '☠ ONE-SHOT SNIPER ELIMINATION';
       }
 
-      // BOTH CLIENTS APPLY SLOW MOTION HERE
       timeManager.setTimeScale(CONFIG.BULLET_CAM.SLOW_MO_SCALE, true);
-
       this.scene.activeCamera = this.bulletCamera;
 
       if (this.letterboxContainer) this.letterboxContainer.classList.remove('hidden');
@@ -302,7 +262,6 @@ export class BulletCam {
         this.playingSubPhase = 'FLIGHT';
       }
     } catch (err) {
-      console.error('[BulletCam] Error during start:', err);
       this.complete();
     }
   }
@@ -353,13 +312,12 @@ export class BulletCam {
         this.bulletCamera.position.y += (Math.random() - 0.5) * shakeAmt;
       }
     } catch (err) {
-      console.error('[BulletCam] Exception in update loop:', err);
       this.complete();
     }
   }
 
   updateFlight(rawDtSec, elapsedSec) {
-    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * (this.lateTrimFactor || 1.0);
+    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.5 * (this.lateTrimFactor || 1.0); // SLOWED DOWN for visibility
     this.traveledDistance += speed * rawDtSec;
     const progress = Math.min(1.0, this.traveledDistance / this.totalDistance);
 
@@ -384,8 +342,11 @@ export class BulletCam {
 
     const remainingDist = this.totalDistance - this.traveledDistance;
 
-    if (remainingDist <= speed * CONFIG.BULLET_CAM.XRAY_LEAD_TIME && !this.xray?.isActive) {
-      if (this.victim && typeof this.xray?.enable === 'function') this.xray.enable(this.victim);
+    // FORCE X-RAY TO TURN ON EARLIER
+    if (remainingDist <= 15.0 && this.xray && !this.xray.isActive) {
+      if (this.victim && typeof this.xray?.enable === 'function') {
+        this.xray.enable(this.victim);
+      }
     }
 
     if (remainingDist <= CONFIG.BULLET_CAM.APPROACH_DISTANCE || progress >= 0.85) {
@@ -395,7 +356,7 @@ export class BulletCam {
   }
 
   updateApproach(rawDtSec, elapsedSec) {
-    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.7 * (this.lateTrimFactor || 1.0);
+    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.3 * (this.lateTrimFactor || 1.0);
     this.traveledDistance += speed * rawDtSec;
     const progress = Math.min(1.0, this.traveledDistance / this.totalDistance);
 
@@ -408,7 +369,7 @@ export class BulletCam {
     this.bulletCamera.position = Vector3.Lerp(this.bulletCamera.position, orbitTargetPos, 12 * rawDtSec);
     this.bulletCamera.setTarget(this.hitPoint);
 
-    if (progress >= 1.0 || elapsedSec > 1.2) {
+    if (progress >= 1.0 || elapsedSec > 1.5) {
       this.triggerImpact();
     }
   }
@@ -417,8 +378,8 @@ export class BulletCam {
     this.playingSubPhase = 'IMPACT';
     this.phaseStartTime = performance.now();
     timeManager.setHitStop(CONFIG.BULLET_CAM.HIT_STOP_DURATION * 1000);
-    this.shakeIntensity = 0.22;
-    this.shakeTimer = 0.25;
+    this.shakeIntensity = 0.3;
+    this.shakeTimer = 0.3;
 
     if (this.whiteFlash) {
       this.whiteFlash.classList.remove('hidden');
@@ -428,13 +389,23 @@ export class BulletCam {
     this.bulletRoot.setEnabled(false);
     this.trailMesh.setEnabled(false);
 
-    if (this.blood && typeof this.blood.spawnBloodBurst === 'function') this.blood.spawnBloodBurst(this.hitPoint, this.direction);
-    if (this.victim && typeof this.victim.triggerRagdoll === 'function') this.victim.triggerRagdoll(this.hitPoint, this.direction, this.isHeadshot);
+    // SPAWN BLOOD
+    if (this.blood && typeof this.blood.spawnBloodBurst === 'function') {
+      this.blood.spawnBloodBurst(this.hitPoint, this.direction);
+    }
+    
+    // FORCE X-RAY ON AT IMPACT
+    if (this.xray && this.victim) {
+      this.xray.enable(this.victim);
+    }
+
+    if (this.victim && typeof this.victim.triggerRagdoll === 'function') {
+      this.victim.triggerRagdoll(this.hitPoint, this.direction, this.isHeadshot);
+    }
   }
 
   updateImpact(elapsedSec) {
     if (elapsedSec >= CONFIG.BULLET_CAM.HIT_STOP_DURATION) {
-      if (this.xray) this.xray.disable();
       this.playingSubPhase = 'RAGDOLL';
       this.phaseStartTime = performance.now();
     }
@@ -450,7 +421,8 @@ export class BulletCam {
     this.bulletCamera.position.set(camX, camY, camZ);
     this.bulletCamera.setTarget(this.hitPoint.add(new Vector3(0, -elapsedSec * 0.3, 0)));
 
-    if (elapsedSec >= CONFIG.BULLET_CAM.RAGDOLL_DURATION) {
+    // Wait longer before ending (3 seconds instead of ~1.5s)
+    if (elapsedSec >= 3.0) {
       this.startEnding();
     }
   }
@@ -465,7 +437,7 @@ export class BulletCam {
     this.bulletCamera.position.set(camX, camY, camZ);
     this.bulletCamera.setTarget(this.hitPoint);
 
-    if (elapsedSec >= 1.5) {
+    if (elapsedSec >= 2.5) {
       this.startEnding();
     }
   }
@@ -479,7 +451,7 @@ export class BulletCam {
     this.scene.activeCamera = this.playerCamera;
     if (this.ui) this.ui.setAds(false);
 
-    setTimeout(() => { this.complete(); }, (CONFIG.BULLET_CAM.EASE_BACK_DURATION || 0.3) * 1000);
+    setTimeout(() => { this.complete(); }, 300);
   }
 
   skipVisual() {
@@ -515,12 +487,11 @@ export class BulletCam {
         this.ui.setAds(false);
       }
     } catch (err) {
-      console.warn('[BulletCam] Cleanup warning:', err);
     } finally {
       if (this.onCompleteCallback) {
         const cb = this.onCompleteCallback;
         this.onCompleteCallback = null;
-        try { cb(this.killInfo); } catch (e) { console.error('[BulletCam] onCompleteCallback error:', e); }
+        try { cb(this.killInfo); } catch (e) {}
       }
       this.processQueue();
     }
