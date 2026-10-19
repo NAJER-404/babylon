@@ -1,4 +1,4 @@
-// High-Fidelity Humanoid Soldier Model
+// High-Fidelity Humanoid Soldier Model (Restored Visuals, Visual Hitboxes)
 import {
   MeshBuilder,
   StandardMaterial,
@@ -63,6 +63,7 @@ export class OpponentCharacter {
   createHumanoidCharacter() {
     this.rootNode = new TransformNode(`humanoidSoldier_${this.id}`, this.scene);
 
+    // Team vest colors
     let vestColorHex = CONFIG.COLORS.TEAM_BLUE_VEST;
     let accentColorHex = CONFIG.COLORS.TEAM_BLUE_ACCENT;
 
@@ -74,11 +75,12 @@ export class OpponentCharacter {
       accentColorHex = CONFIG.COLORS.TEAM_RED_ACCENT;
     }
 
+    // --- MATERIALS ---
     const vestMat = new StandardMaterial(`soldierVest_${this.id}`, this.scene);
     vestMat.diffuseColor = Color3.FromHexString(vestColorHex);
     vestMat.emissiveColor = Color3.FromHexString(vestColorHex).scale(0.45);
     vestMat.specularColor = new Color3(0.2, 0.2, 0.2);
-    this.vestMat = vestMat;
+    this.vestMat = vestMat; 
 
     const accentMat = new StandardMaterial(`soldierAcc_${this.id}`, this.scene);
     accentMat.diffuseColor = Color3.FromHexString(accentColorHex);
@@ -91,10 +93,11 @@ export class OpponentCharacter {
     const skinMat = new StandardMaterial(`soldierSkin_${this.id}`, this.scene);
     skinMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_SKIN);
     skinMat.specularColor = new Color3(0.1, 0.1, 0.1);
-    this.skinMat = skinMat;
+    this.skinMat = skinMat; 
 
     const pantsMat = new StandardMaterial(`soldierPants_${this.id}`, this.scene);
     pantsMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_PANTS);
+    pantsMat.specularColor = new Color3(0.1, 0.1, 0.1);
 
     const bootsMat = new StandardMaterial(`soldierBoots_${this.id}`, this.scene);
     bootsMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_BOOTS);
@@ -105,61 +108,105 @@ export class OpponentCharacter {
 
     const steelMat = new StandardMaterial(`soldierSteelMat_${this.id}`, this.scene);
     steelMat.diffuseColor = new Color3(0.75, 0.78, 0.82);
+    steelMat.specularColor = new Color3(0.9, 0.9, 1.0);
 
     const visorMat = new StandardMaterial(`soldierVisor_${this.id}`, this.scene);
     visorMat.diffuseColor = new Color3(0.05, 0.15, 0.25);
     visorMat.emissiveColor = new Color3(0.0, 0.3, 0.45);
+    visorMat.specularColor = new Color3(0.9, 0.9, 1.0);
 
     // ==========================================
-    // 1. VISUAL TORSO & HEAD (NOT PICKABLE)
+    // 1. TORSO & TACTICAL VEST (Used as Hitbox)
     // ==========================================
-    this.torso = MeshBuilder.CreateBox(`sTorso_${this.id}`, { width: 0.68, height: 0.78, depth: 0.38 }, this.scene);
+    this.torso = MeshBuilder.CreateBox(
+      `sTorso_${this.id}`,
+      { width: 0.68, height: 0.78, depth: 0.38 },
+      this.scene
+    );
     this.torso.parent = this.rootNode;
     this.torso.position.y = 1.25;
     this.torso.material = vestMat;
-    this.torso.isPickable = false; // Ray passes through
+    
+    // Torso is now the direct hitbox
+    this.torso.isPickable = true;
+    this.torso.metadata = {
+      isHitbox: true,
+      hitPart: 'torso',
+      targetId: this.id,
+      targetType: this.isBot ? 'bot' : 'player'
+    };
 
-    this.head = MeshBuilder.CreateBox(`sHead_${this.id}`, { width: 0.40, height: 0.42, depth: 0.40 }, this.scene);
+    // Chest Plate (Not pickable so bullets pass through to torso)
+    const chestPlate = MeshBuilder.CreateBox(`sChestPlate_${this.id}`, { width: 0.62, height: 0.44, depth: 0.08 }, this.scene);
+    chestPlate.parent = this.torso;
+    chestPlate.position = new Vector3(0, 0.12, 0.18);
+    chestPlate.material = accentMat;
+    chestPlate.isPickable = false;
+
+    // Ammo Pouches
+    for (let i = -1; i <= 1; i++) {
+      const pouch = MeshBuilder.CreateBox(`sPouch_${i}_${this.id}`, { width: 0.12, height: 0.15, depth: 0.08 }, this.scene);
+      pouch.parent = this.torso;
+      pouch.position = new Vector3(i * 0.18, -0.26, 0.19);
+      pouch.material = helmetMat;
+      pouch.isPickable = false;
+    }
+
+    // ==========================================
+    // 2. HEAD & TACTICAL HELMET (Used as Hitbox)
+    // ==========================================
+    this.head = MeshBuilder.CreateBox(
+      `sHead_${this.id}`,
+      { width: 0.40, height: 0.42, depth: 0.40 },
+      this.scene
+    );
     this.head.parent = this.rootNode;
     this.head.position.y = 1.88;
     this.head.material = skinMat;
-    this.head.isPickable = false; // Ray passes through
+    
+    // Head is now the direct hitbox
+    this.head.isPickable = true;
+    this.head.metadata = {
+      isHitbox: true,
+      hitPart: 'head',
+      targetId: this.id,
+      targetType: this.isBot ? 'bot' : 'player'
+    };
 
-    // Tactical Helmet
-    const helmet = MeshBuilder.CreateSphere(`sHelmet_${this.id}`, { diameterX: 0.52, diameterY: 0.48, diameterZ: 0.54, segments: 8 }, this.scene);
+    // Tactical Helmet (Not pickable)
+    const helmet = MeshBuilder.CreateSphere(
+      `sHelmet_${this.id}`,
+      { diameterX: 0.48, diameterY: 0.42, diameterZ: 0.50, segments: 8 },
+      this.scene
+    );
     helmet.parent = this.head;
     helmet.position.y = 0.12;
     helmet.material = helmetMat;
     helmet.isPickable = false;
 
-    // Visor
-    const visor = MeshBuilder.CreateBox(`sVisor_${this.id}`, { width: 0.34, height: 0.12, depth: 0.14 }, this.scene);
+    // Tactical Visor (Not pickable)
+    const visor = MeshBuilder.CreateBox(
+      `sVisor_${this.id}`,
+      { width: 0.34, height: 0.12, depth: 0.14 },
+      this.scene
+    );
     visor.parent = this.head;
     visor.position = new Vector3(0, 0.04, 0.20);
     visor.material = visorMat;
     visor.isPickable = false;
 
-    // ==========================================
-    // 2. DEDICATED INVISIBLE HITBOXES (PICKABLE)
-    // ==========================================
-    // Head Hitbox (Sphere larger than helmet)
-    this.headHitbox = MeshBuilder.CreateSphere(`hitbox_head_${this.id}`, { diameter: 0.75, segments: 8 }, this.scene);
-    this.headHitbox.parent = this.rootNode;
-    this.headHitbox.position.y = 1.95;
-    this.headHitbox.isVisible = false;
-    this.headHitbox.isPickable = true;
-    this.headHitbox.metadata = { isHitbox: true, hitPart: 'head', targetId: this.id, targetType: this.isBot ? 'bot' : 'player' };
-
-    // Torso Hitbox (Box larger than chest)
-    this.bodyHitbox = MeshBuilder.CreateBox(`hitbox_torso_${this.id}`, { width: 0.85, height: 1.0, depth: 0.55 }, this.scene);
-    this.bodyHitbox.parent = this.rootNode;
-    this.bodyHitbox.position.y = 1.25;
-    this.bodyHitbox.isVisible = false;
-    this.bodyHitbox.isPickable = true;
-    this.bodyHitbox.metadata = { isHitbox: true, hitPart: 'torso', targetId: this.id, targetType: this.isBot ? 'bot' : 'player' };
+    // Ear Cups
+    [-0.22, 0.22].forEach((x, idx) => {
+      const earCup = MeshBuilder.CreateCylinder(`sEarCup_${idx}_${this.id}`, { height: 0.06, diameter: 0.12 }, this.scene);
+      earCup.parent = this.head;
+      earCup.rotation.z = Math.PI / 2;
+      earCup.position.set(x, 0.02, 0);
+      earCup.material = helmetMat;
+      earCup.isPickable = false;
+    });
 
     // ==========================================
-    // 3. ARMS & LEGS (NOT PICKABLE)
+    // 3. UPPER BODY AIM PIVOT & ARMS
     // ==========================================
     this.upperBodyAimPivot = new TransformNode(`sAimPivot_${this.id}`, this.scene);
     this.upperBodyAimPivot.parent = this.rootNode;
@@ -169,44 +216,44 @@ export class OpponentCharacter {
     this.rightArmPivot.parent = this.upperBodyAimPivot;
     this.rightArmPivot.position = new Vector3(0.44, 0.12, -0.04);
 
-    this.rightArm = MeshBuilder.CreateBox(`sRightArm_${this.id}`, { width: 0.24, height: 0.72, depth: 0.24 }, this.scene);
+    this.rightArm = MeshBuilder.CreateBox(
+      `sRightArm_${this.id}`,
+      { width: 0.24, height: 0.72, depth: 0.24 },
+      this.scene
+    );
     this.rightArm.parent = this.rightArmPivot;
     this.rightArm.position = new Vector3(0, -0.34, 0);
     this.rightArm.material = vestMat;
     this.rightArm.isPickable = false;
 
+    const rightHand = MeshBuilder.CreateBox(`sRightHand_${this.id}`, { width: 0.22, height: 0.18, depth: 0.22 }, this.scene);
+    rightHand.parent = this.rightArm;
+    rightHand.position = new Vector3(0, -0.28, 0);
+    rightHand.material = helmetMat;
+    rightHand.isPickable = false;
+
     this.leftArmPivot = new TransformNode(`sLeftArmPivot_${this.id}`, this.scene);
     this.leftArmPivot.parent = this.upperBodyAimPivot;
     this.leftArmPivot.position = new Vector3(-0.44, 0.12, 0);
 
-    this.leftArm = MeshBuilder.CreateBox(`sLeftArm_${this.id}`, { width: 0.24, height: 0.72, depth: 0.24 }, this.scene);
+    this.leftArm = MeshBuilder.CreateBox(
+      `sLeftArm_${this.id}`,
+      { width: 0.24, height: 0.72, depth: 0.24 },
+      this.scene
+    );
     this.leftArm.parent = this.leftArmPivot;
     this.leftArm.position = new Vector3(0, -0.34, 0);
     this.leftArm.material = vestMat;
     this.leftArm.isPickable = false;
 
-    this.leftLegPivot = new TransformNode(`sLeftLegPivot_${this.id}`, this.scene);
-    this.leftLegPivot.parent = this.rootNode;
-    this.leftLegPivot.position = new Vector3(-0.18, 0.85, 0);
-
-    this.leftLeg = MeshBuilder.CreateBox(`sLeftLeg_${this.id}`, { width: 0.30, height: 0.80, depth: 0.30 }, this.scene);
-    this.leftLeg.parent = this.leftLegPivot;
-    this.leftLeg.position = new Vector3(0, -0.38, 0);
-    this.leftLeg.material = pantsMat;
-    this.leftLeg.isPickable = false;
-
-    this.rightLegPivot = new TransformNode(`sRightLegPivot_${this.id}`, this.scene);
-    this.rightLegPivot.parent = this.rootNode;
-    this.rightLegPivot.position = new Vector3(0.18, 0.85, 0);
-
-    this.rightLeg = MeshBuilder.CreateBox(`sRightLeg_${this.id}`, { width: 0.30, height: 0.80, depth: 0.30 }, this.scene);
-    this.rightLeg.parent = this.rightLegPivot;
-    this.rightLeg.position = new Vector3(0, -0.38, 0);
-    this.rightLeg.material = pantsMat;
-    this.rightLeg.isPickable = false;
+    const leftHand = MeshBuilder.CreateBox(`sLeftHand_${this.id}`, { width: 0.22, height: 0.18, depth: 0.22 }, this.scene);
+    leftHand.parent = this.leftArm;
+    leftHand.position = new Vector3(0, -0.28, 0);
+    leftHand.material = helmetMat;
+    leftHand.isPickable = false;
 
     // ==========================================
-    // 4. WEAPONS
+    // 4. WEAPONS: SNIPER RIFLE & COMBAT KNIFE
     // ==========================================
     this.sniperRifleMesh = new TransformNode(`sHeldSniper_${this.id}`, this.scene);
     this.sniperRifleMesh.parent = this.upperBodyAimPivot;
@@ -223,6 +270,19 @@ export class OpponentCharacter {
     gunBarrel.position = new Vector3(0, 0.02, 0.58);
     gunBarrel.material = weaponMat;
     gunBarrel.isPickable = false;
+
+    const gunBrake = MeshBuilder.CreateBox(`sGunBrake_${this.id}`, { width: 0.08, height: 0.06, depth: 0.14 }, this.scene);
+    gunBrake.parent = this.sniperRifleMesh;
+    gunBrake.position = new Vector3(0, 0.02, 0.92);
+    gunBrake.material = weaponMat;
+    gunBrake.isPickable = false;
+
+    const gunScope = MeshBuilder.CreateCylinder(`sGunScope_${this.id}`, { height: 0.36, diameter: 0.052 }, this.scene);
+    gunScope.parent = this.sniperRifleMesh;
+    gunScope.rotation.x = Math.PI / 2;
+    gunScope.position = new Vector3(0, 0.10, 0.06);
+    gunScope.material = weaponMat;
+    gunScope.isPickable = false;
 
     this.scopeGlintMesh = MeshBuilder.CreatePlane(`sScopeGlint_${this.id}`, { size: 0.5 }, this.scene);
     this.scopeGlintMesh.parent = this.sniperRifleMesh;
@@ -274,6 +334,12 @@ export class OpponentCharacter {
     kHandle.material = helmetMat;
     kHandle.isPickable = false;
 
+    const kGuard = MeshBuilder.CreateBox(`sKGuard_${this.id}`, { width: 0.05, height: 0.08, depth: 0.02 }, this.scene);
+    kGuard.parent = this.combatKnifeMesh;
+    kGuard.position = new Vector3(0, 0, 0.09);
+    kGuard.material = weaponMat;
+    kGuard.isPickable = false;
+
     const kBlade = MeshBuilder.CreateBox(`sKBlade_${this.id}`, { width: 0.016, height: 0.06, depth: 0.24 }, this.scene);
     kBlade.parent = this.combatKnifeMesh;
     kBlade.position = new Vector3(0, 0.01, 0.21);
@@ -285,6 +351,50 @@ export class OpponentCharacter {
     this.leftArmPivot.rotation.x = -1.05;
     this.leftArmPivot.rotation.y = 0.52;
 
+    // ==========================================
+    // 5. LOWER BODY & TACTICAL BOOTS
+    // ==========================================
+    this.leftLegPivot = new TransformNode(`sLeftLegPivot_${this.id}`, this.scene);
+    this.leftLegPivot.parent = this.rootNode;
+    this.leftLegPivot.position = new Vector3(-0.18, 0.85, 0);
+
+    this.leftLeg = MeshBuilder.CreateBox(
+      `sLeftLeg_${this.id}`,
+      { width: 0.30, height: 0.80, depth: 0.30 },
+      this.scene
+    );
+    this.leftLeg.parent = this.leftLegPivot;
+    this.leftLeg.position = new Vector3(0, -0.38, 0);
+    this.leftLeg.material = pantsMat;
+    this.leftLeg.isPickable = false;
+
+    const leftBoot = MeshBuilder.CreateBox(`sLeftBoot_${this.id}`, { width: 0.32, height: 0.22, depth: 0.38 }, this.scene);
+    leftBoot.parent = this.leftLeg;
+    leftBoot.position = new Vector3(0, -0.34, 0.04);
+    leftBoot.material = bootsMat;
+    leftBoot.isPickable = false;
+
+    this.rightLegPivot = new TransformNode(`sRightLegPivot_${this.id}`, this.scene);
+    this.rightLegPivot.parent = this.rootNode;
+    this.rightLegPivot.position = new Vector3(0.18, 0.85, 0);
+
+    this.rightLeg = MeshBuilder.CreateBox(
+      `sRightLeg_${this.id}`,
+      { width: 0.30, height: 0.80, depth: 0.30 },
+      this.scene
+    );
+    this.rightLeg.parent = this.rightLegPivot;
+    this.rightLeg.position = new Vector3(0, -0.38, 0);
+    this.rightLeg.material = pantsMat;
+    this.rightLeg.isPickable = false;
+
+    const rightBoot = MeshBuilder.CreateBox(`sRightBoot_${this.id}`, { width: 0.32, height: 0.22, depth: 0.38 }, this.scene);
+    rightBoot.parent = this.rightLeg;
+    rightBoot.position = new Vector3(0, -0.34, 0.04);
+    rightBoot.material = bootsMat;
+    rightBoot.isPickable = false;
+
+    // Spawn Protection Shield
     this.shieldSphere = MeshBuilder.CreateSphere(`soldierShield_${this.id}`, { diameter: 2.6, segments: 16 }, this.scene);
     this.shieldSphere.parent = this.rootNode;
     this.shieldSphere.position.y = 1.2;
@@ -442,7 +552,7 @@ export class OpponentCharacter {
 
   setHitboxesWireframe(visible) {
     this.hitboxesWireframeVisible = !!visible;
-    const hitboxes = [this.headHitbox, this.bodyHitbox]; 
+    const hitboxes = [this.head, this.torso]; 
     if (visible && !this.debugWireframeMat) {
       this.debugWireframeMat = new StandardMaterial(`hitboxWireMat_${this.id}`, this.scene);
       this.debugWireframeMat.wireframe = true;
@@ -451,8 +561,8 @@ export class OpponentCharacter {
     }
     hitboxes.forEach(m => {
       if (!m) return;
-      if (visible) { m.material = this.debugWireframeMat; m.isVisible = true; }
-      else { m.material = null; m.isVisible = false; }
+      if (visible) { m.material = this.debugWireframeMat; }
+      else { m.material = (m === this.head) ? this.skinMat : this.vestMat; }
     });
   }
 
@@ -539,10 +649,9 @@ export class OpponentCharacter {
     const targetCrouchFactor = this.isCrouching ? 1.0 : 0.0;
     this.crouchFactor = this.crouchFactor !== undefined ? this.crouchFactor + (targetCrouchFactor - this.crouchFactor) * Math.min(1.0, 14 * dt) : targetCrouchFactor;
 
+    // Update visual hitboxes positions on crouch
     if (this.head) this.head.position.y = 1.88 - this.crouchFactor * 0.73;
-    if (this.headHitbox) this.headHitbox.position.y = 1.95 - this.crouchFactor * 0.75;
     if (this.torso) this.torso.position.y = 1.25 - this.crouchFactor * 0.50;
-    if (this.bodyHitbox) this.bodyHitbox.position.y = 1.25 - this.crouchFactor * 0.45;
     if (this.upperBodyAimPivot) this.upperBodyAimPivot.position.y = 1.45 - this.crouchFactor * 0.50;
 
     if (this.muzzleFlashTimer > 0) {
@@ -727,15 +836,12 @@ export class OpponentCharacter {
 
   setVisible(visible) {
     this.isAlive = visible;
-    if (this.torso) this.torso.isVisible = visible;
-    if (this.head) this.head.isVisible = visible;
+    if (this.torso) { this.torso.isVisible = visible; this.torso.isPickable = visible; }
+    if (this.head) { this.head.isVisible = visible; this.head.isPickable = visible; }
     if (this.leftArm) this.leftArm.isVisible = visible;
     if (this.rightArm) this.rightArm.isVisible = visible;
     if (this.leftLeg) this.leftLeg.isVisible = visible;
     if (this.rightLeg) this.rightLeg.isVisible = visible;
-    
-    if (this.headHitbox) { this.headHitbox.isPickable = visible; this.headHitbox.isVisible = visible; }
-    if (this.bodyHitbox) { this.bodyHitbox.isPickable = visible; this.bodyHitbox.isVisible = visible; }
 
     if (this.nameTagPlane) this.nameTagPlane.isVisible = visible;
     const isSniper = this.activeWeapon === 'sniper';
