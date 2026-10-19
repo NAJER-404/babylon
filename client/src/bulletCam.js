@@ -63,7 +63,6 @@ export class BulletCam {
 
     this.createPooledBullet();
     this.setupLetterboxUI();
-    this.setupInputListener();
   }
 
   get isActive() {
@@ -101,7 +100,6 @@ export class BulletCam {
       this.letterboxContainer = document.createElement('div');
       this.letterboxContainer.id = 'cinematic-letterbox';
       this.letterboxContainer.className = 'letterbox-container hidden';
-      // [SPACE] SKIP VIEW HAS BEEN REMOVED HERE
       this.letterboxContainer.innerHTML = `
         <div class="letterbox-bar top">
           <div id="killcam-banner-text" class="killcam-banner">CINEMATIC KILL CAM</div>
@@ -123,14 +121,6 @@ export class BulletCam {
     this.distTag = document.getElementById('killcam-dist-tag');
     this.targetLabel = document.getElementById('killcam-target-label');
     this.whiteFlash = document.getElementById('killcam-white-flash');
-  }
-
-  setupInputListener() {
-    window.addEventListener('keydown', (e) => {
-      if (this.isActive && e.code === 'Space') {
-        this.skipVisual();
-      }
-    });
   }
 
   prewarm(scene) {
@@ -230,6 +220,11 @@ export class BulletCam {
       timeManager.setTimeScale(CONFIG.BULLET_CAM.SLOW_MO_SCALE, true);
       this.scene.activeCamera = this.bulletCamera;
 
+      // FORCE X-RAY TO BE VISIBLE IMMEDIATELY
+      if (this.xray && this.victim) {
+        this.xray.enable(this.victim);
+      }
+
       if (this.letterboxContainer) this.letterboxContainer.classList.remove('hidden');
       if (this.ui) {
         this.ui.setBulletCamActive(true);
@@ -317,7 +312,7 @@ export class BulletCam {
   }
 
   updateFlight(rawDtSec, elapsedSec) {
-    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.5 * (this.lateTrimFactor || 1.0); // SLOWED DOWN for visibility
+    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.5 * (this.lateTrimFactor || 1.0); 
     this.traveledDistance += speed * rawDtSec;
     const progress = Math.min(1.0, this.traveledDistance / this.totalDistance);
 
@@ -341,13 +336,6 @@ export class BulletCam {
     }
 
     const remainingDist = this.totalDistance - this.traveledDistance;
-
-    // FORCE X-RAY TO TURN ON EARLIER
-    if (remainingDist <= 15.0 && this.xray && !this.xray.isActive) {
-      if (this.victim && typeof this.xray?.enable === 'function') {
-        this.xray.enable(this.victim);
-      }
-    }
 
     if (remainingDist <= CONFIG.BULLET_CAM.APPROACH_DISTANCE || progress >= 0.85) {
       this.playingSubPhase = 'APPROACH';
@@ -377,7 +365,10 @@ export class BulletCam {
   triggerImpact() {
     this.playingSubPhase = 'IMPACT';
     this.phaseStartTime = performance.now();
-    timeManager.setHitStop(CONFIG.BULLET_CAM.HIT_STOP_DURATION * 1000);
+    
+    // Increased hit stop duration slightly so you can actually see the blood burst before the camera moves
+    timeManager.setHitStop(0.15 * 1000); 
+    
     this.shakeIntensity = 0.3;
     this.shakeTimer = 0.3;
 
@@ -393,11 +384,6 @@ export class BulletCam {
     if (this.blood && typeof this.blood.spawnBloodBurst === 'function') {
       this.blood.spawnBloodBurst(this.hitPoint, this.direction);
     }
-    
-    // FORCE X-RAY ON AT IMPACT
-    if (this.xray && this.victim) {
-      this.xray.enable(this.victim);
-    }
 
     if (this.victim && typeof this.victim.triggerRagdoll === 'function') {
       this.victim.triggerRagdoll(this.hitPoint, this.direction, this.isHeadshot);
@@ -405,7 +391,8 @@ export class BulletCam {
   }
 
   updateImpact(elapsedSec) {
-    if (elapsedSec >= CONFIG.BULLET_CAM.HIT_STOP_DURATION) {
+    // Wait for the hitstop to finish, keeping the camera locked on the blood/X-Ray
+    if (elapsedSec >= 0.15) {
       this.playingSubPhase = 'RAGDOLL';
       this.phaseStartTime = performance.now();
     }
@@ -421,7 +408,7 @@ export class BulletCam {
     this.bulletCamera.position.set(camX, camY, camZ);
     this.bulletCamera.setTarget(this.hitPoint.add(new Vector3(0, -elapsedSec * 0.3, 0)));
 
-    // Wait longer before ending (3 seconds instead of ~1.5s)
+    // Wait longer (3 seconds) during the ragdoll fall to admire the X-Ray
     if (elapsedSec >= 3.0) {
       this.startEnding();
     }
@@ -452,15 +439,6 @@ export class BulletCam {
     if (this.ui) this.ui.setAds(false);
 
     setTimeout(() => { this.complete(); }, 300);
-  }
-
-  skipVisual() {
-    if (this.camState === BULLET_CAM_STATE.IDLE) return;
-    if (this.letterboxContainer) this.letterboxContainer.classList.add('hidden');
-    if (this.whiteFlash) this.whiteFlash.classList.add('hidden');
-    this.scene.activeCamera = this.playerCamera;
-    if (this.xray) this.xray.disable();
-    timeManager.reset();
   }
 
   clearWatchdog() {

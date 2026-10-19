@@ -1,4 +1,4 @@
-// High-Fidelity Humanoid Soldier Model (Restored Visuals, Visual Hitboxes)
+// High-Fidelity Humanoid Soldier Model with Fast Running Animations & Two-Handed Grip
 import {
   MeshBuilder,
   StandardMaterial,
@@ -126,17 +126,9 @@ export class OpponentCharacter {
     this.torso.parent = this.rootNode;
     this.torso.position.y = 1.25;
     this.torso.material = vestMat;
-    
-    // Torso is now the direct hitbox
-    this.torso.isPickable = true;
-    this.torso.metadata = {
-      isHitbox: true,
-      hitPart: 'torso',
-      targetId: this.id,
-      targetType: this.isBot ? 'bot' : 'player'
-    };
+    this.torso.isPickable = false; // Hitbox below handles picking
 
-    // Chest Plate (Not pickable so bullets pass through to torso)
+    // Chest Plate (Visual only)
     const chestPlate = MeshBuilder.CreateBox(`sChestPlate_${this.id}`, { width: 0.62, height: 0.44, depth: 0.08 }, this.scene);
     chestPlate.parent = this.torso;
     chestPlate.position = new Vector3(0, 0.12, 0.18);
@@ -163,17 +155,9 @@ export class OpponentCharacter {
     this.head.parent = this.rootNode;
     this.head.position.y = 1.88;
     this.head.material = skinMat;
-    
-    // Head is now the direct hitbox
-    this.head.isPickable = true;
-    this.head.metadata = {
-      isHitbox: true,
-      hitPart: 'head',
-      targetId: this.id,
-      targetType: this.isBot ? 'bot' : 'player'
-    };
+    this.head.isPickable = false; // Hitbox below handles picking
 
-    // Tactical Helmet (Not pickable)
+    // Tactical Helmet
     const helmet = MeshBuilder.CreateSphere(
       `sHelmet_${this.id}`,
       { diameterX: 0.48, diameterY: 0.42, diameterZ: 0.50, segments: 8 },
@@ -184,7 +168,7 @@ export class OpponentCharacter {
     helmet.material = helmetMat;
     helmet.isPickable = false;
 
-    // Tactical Visor (Not pickable)
+    // Tactical Visor
     const visor = MeshBuilder.CreateBox(
       `sVisor_${this.id}`,
       { width: 0.34, height: 0.12, depth: 0.14 },
@@ -206,21 +190,35 @@ export class OpponentCharacter {
     });
 
     // ==========================================
-    // 3. UPPER BODY AIM PIVOT & ARMS
+    // 3. DEDICATED INVISIBLE HITBOXES (PICKABLE)
+    // ==========================================
+    this.headHitbox = MeshBuilder.CreateSphere(`hitbox_head_${this.id}`, { diameter: 0.75, segments: 8 }, this.scene);
+    this.headHitbox.parent = this.rootNode;
+    this.headHitbox.position.y = 1.95;
+    this.headHitbox.isVisible = false;
+    this.headHitbox.isPickable = true;
+    this.headHitbox.metadata = { isHitbox: true, hitPart: 'head', targetId: this.id, targetType: this.isBot ? 'bot' : 'player' };
+
+    this.bodyHitbox = MeshBuilder.CreateBox(`hitbox_torso_${this.id}`, { width: 0.85, height: 1.0, depth: 0.55 }, this.scene);
+    this.bodyHitbox.parent = this.rootNode;
+    this.bodyHitbox.position.y = 1.25;
+    this.bodyHitbox.isVisible = false;
+    this.bodyHitbox.isPickable = true;
+    this.bodyHitbox.metadata = { isHitbox: true, hitPart: 'torso', targetId: this.id, targetType: this.isBot ? 'bot' : 'player' };
+
+    // ==========================================
+    // 4. UPPER BODY AIM PIVOT & ARMS
     // ==========================================
     this.upperBodyAimPivot = new TransformNode(`sAimPivot_${this.id}`, this.scene);
     this.upperBodyAimPivot.parent = this.rootNode;
     this.upperBodyAimPivot.position.set(0, 1.45, 0);
 
+    // Right Arm (Trigger Hand)
     this.rightArmPivot = new TransformNode(`sRightArmPivot_${this.id}`, this.scene);
     this.rightArmPivot.parent = this.upperBodyAimPivot;
     this.rightArmPivot.position = new Vector3(0.44, 0.12, -0.04);
 
-    this.rightArm = MeshBuilder.CreateBox(
-      `sRightArm_${this.id}`,
-      { width: 0.24, height: 0.72, depth: 0.24 },
-      this.scene
-    );
+    this.rightArm = MeshBuilder.CreateBox(`sRightArm_${this.id}`, { width: 0.24, height: 0.72, depth: 0.24 }, this.scene);
     this.rightArm.parent = this.rightArmPivot;
     this.rightArm.position = new Vector3(0, -0.34, 0);
     this.rightArm.material = vestMat;
@@ -232,15 +230,12 @@ export class OpponentCharacter {
     rightHand.material = helmetMat;
     rightHand.isPickable = false;
 
+    // Left Arm (Foregrip / Support Hand)
     this.leftArmPivot = new TransformNode(`sLeftArmPivot_${this.id}`, this.scene);
     this.leftArmPivot.parent = this.upperBodyAimPivot;
     this.leftArmPivot.position = new Vector3(-0.44, 0.12, 0);
 
-    this.leftArm = MeshBuilder.CreateBox(
-      `sLeftArm_${this.id}`,
-      { width: 0.24, height: 0.72, depth: 0.24 },
-      this.scene
-    );
+    this.leftArm = MeshBuilder.CreateBox(`sLeftArm_${this.id}`, { width: 0.24, height: 0.72, depth: 0.24 }, this.scene);
     this.leftArm.parent = this.leftArmPivot;
     this.leftArm.position = new Vector3(0, -0.34, 0);
     this.leftArm.material = vestMat;
@@ -253,11 +248,12 @@ export class OpponentCharacter {
     leftHand.isPickable = false;
 
     // ==========================================
-    // 4. WEAPONS: SNIPER RIFLE & COMBAT KNIFE
+    // 5. WEAPONS: SNIPER RIFLE & COMBAT KNIFE
     // ==========================================
     this.sniperRifleMesh = new TransformNode(`sHeldSniper_${this.id}`, this.scene);
     this.sniperRifleMesh.parent = this.upperBodyAimPivot;
-    this.sniperRifleMesh.position = new Vector3(0.20, -0.10, 0.40);
+    // Adjusted position to sit perfectly in the hands
+    this.sniperRifleMesh.position = new Vector3(0.15, -0.12, 0.45);
 
     const gunChassis = MeshBuilder.CreateBox(`sGunChassis_${this.id}`, { width: 0.07, height: 0.12, depth: 0.72 }, this.scene);
     gunChassis.parent = this.sniperRifleMesh;
@@ -284,6 +280,7 @@ export class OpponentCharacter {
     gunScope.material = weaponMat;
     gunScope.isPickable = false;
 
+    // Scope Glint
     this.scopeGlintMesh = MeshBuilder.CreatePlane(`sScopeGlint_${this.id}`, { size: 0.5 }, this.scene);
     this.scopeGlintMesh.parent = this.sniperRifleMesh;
     this.scopeGlintMesh.position = new Vector3(0, 0.10, 0.28);
@@ -309,6 +306,7 @@ export class OpponentCharacter {
     this.scopeGlintMesh.isVisible = false;
     this.scopeGlintMesh.isPickable = false;
 
+    // Muzzle tip
     this.muzzleTip = MeshBuilder.CreateBox(`sMuzzleTip_${this.id}`, { size: 0.01 }, this.scene);
     this.muzzleTip.parent = this.sniperRifleMesh;
     this.muzzleTip.position = new Vector3(0, 0.02, 1.02);
@@ -324,6 +322,7 @@ export class OpponentCharacter {
     this.muzzleFlash.isVisible = false;
     this.muzzleFlash.isPickable = false;
 
+    // Combat Knife
     this.combatKnifeMesh = new TransformNode(`sHeldKnife_${this.id}`, this.scene);
     this.combatKnifeMesh.parent = this.upperBodyAimPivot;
     this.combatKnifeMesh.position = new Vector3(0.24, -0.06, 0.32);
@@ -346,13 +345,19 @@ export class OpponentCharacter {
     kBlade.material = steelMat;
     kBlade.isPickable = false;
 
-    this.rightArmPivot.rotation.x = -1.15;
-    this.rightArmPivot.rotation.y = -0.22;
-    this.leftArmPivot.rotation.x = -1.05;
-    this.leftArmPivot.rotation.y = 0.52;
+    // --- PROPER TWO-HANDED RIFLE POSE ---
+    // Right hand gripping trigger
+    this.rightArmPivot.rotation.x = -1.25;
+    this.rightArmPivot.rotation.y = -0.25;
+    this.rightArmPivot.rotation.z = 0.1;
+    
+    // Left hand supporting barrel
+    this.leftArmPivot.rotation.x = -1.45;
+    this.leftArmPivot.rotation.y = 0.35;
+    this.leftArmPivot.rotation.z = -0.2;
 
     // ==========================================
-    // 5. LOWER BODY & TACTICAL BOOTS
+    // 6. LOWER BODY & TACTICAL BOOTS
     // ==========================================
     this.leftLegPivot = new TransformNode(`sLeftLegPivot_${this.id}`, this.scene);
     this.leftLegPivot.parent = this.rootNode;
@@ -552,7 +557,7 @@ export class OpponentCharacter {
 
   setHitboxesWireframe(visible) {
     this.hitboxesWireframeVisible = !!visible;
-    const hitboxes = [this.head, this.torso]; 
+    const hitboxes = [this.headHitbox, this.bodyHitbox]; 
     if (visible && !this.debugWireframeMat) {
       this.debugWireframeMat = new StandardMaterial(`hitboxWireMat_${this.id}`, this.scene);
       this.debugWireframeMat.wireframe = true;
@@ -561,8 +566,8 @@ export class OpponentCharacter {
     }
     hitboxes.forEach(m => {
       if (!m) return;
-      if (visible) { m.material = this.debugWireframeMat; }
-      else { m.material = (m === this.head) ? this.skinMat : this.vestMat; }
+      if (visible) { m.material = this.debugWireframeMat; m.isVisible = true; }
+      else { m.material = null; m.isVisible = false; }
     });
   }
 
@@ -651,7 +656,9 @@ export class OpponentCharacter {
 
     // Update visual hitboxes positions on crouch
     if (this.head) this.head.position.y = 1.88 - this.crouchFactor * 0.73;
+    if (this.headHitbox) this.headHitbox.position.y = 1.95 - this.crouchFactor * 0.75;
     if (this.torso) this.torso.position.y = 1.25 - this.crouchFactor * 0.50;
+    if (this.bodyHitbox) this.bodyHitbox.position.y = 1.25 - this.crouchFactor * 0.45;
     if (this.upperBodyAimPivot) this.upperBodyAimPivot.position.y = 1.45 - this.crouchFactor * 0.50;
 
     if (this.muzzleFlashTimer > 0) {
@@ -754,36 +761,54 @@ export class OpponentCharacter {
     const isKnife = this.activeWeapon === 'knife';
 
     if (isMoving) {
-      const animRate = Math.min(18.0, Math.max(8.0, moveSpeed * 1.6));
+      // INCREASE ANIMATION RATE BASED ON SPEED (Fast Run)
+      const animRate = Math.min(22.0, Math.max(10.0, moveSpeed * 1.8));
       this.walkAnimTimer += dt * animRate;
-      const legAngle = Math.sin(this.walkAnimTimer) * 0.72;
+      
+      // WIDER LEG SWING WHEN RUNNING FAST
+      const legSwing = (moveSpeed > 7.0) ? 1.1 : 0.72;
+      const legAngle = Math.sin(this.walkAnimTimer) * legSwing;
+      
       this.leftLegPivot.rotation.x = legAngle;
       this.rightLegPivot.rotation.x = -legAngle;
-      this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + Math.abs(Math.sin(this.walkAnimTimer)) * 0.05;
-      this.torso.rotation.x = 0.12;
-      const armSway = Math.sin(this.walkAnimTimer) * 0.10;
+      
+      // FORWARD TORSO LEAN WHEN RUNNING
+      const targetLean = (moveSpeed > 7.0) ? 0.25 : 0.12;
+      this.torso.rotation.x = targetLean;
+      this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + Math.abs(Math.sin(this.walkAnimTimer)) * 0.08;
+
+      // Keep arms holding the gun tightly, with a slight sway
+      const armSway = Math.sin(this.walkAnimTimer) * 0.05;
       if (isKnife) {
         this.rightArmPivot.rotation.x = -0.75 + armSway + meleeArmRotX;
         this.rightArmPivot.rotation.y = 0.20 + meleeArmRotY;
-        this.leftArmPivot.rotation.x = 0.40 - armSway; this.leftArmPivot.rotation.y = 0.10;
+        this.leftArmPivot.rotation.x = 0.40 - armSway; 
+        this.leftArmPivot.rotation.y = 0.10;
       } else {
-        this.rightArmPivot.rotation.x = -1.15 + armSway + meleeArmRotX;
-        this.leftArmPivot.rotation.x = -1.05 - armSway;
+        this.rightArmPivot.rotation.x = -1.25 + armSway + meleeArmRotX;
+        this.rightArmPivot.rotation.y = -0.25;
+        this.leftArmPivot.rotation.x = -1.45 - armSway;
+        this.leftArmPivot.rotation.y = 0.35;
       }
     } else {
       this.idleTimer += dt * 2.2;
       const breathe = Math.sin(this.idleTimer) * 0.02;
       this.leftLegPivot.rotation.x = this.lerpAngle(this.leftLegPivot.rotation.x, 0, 12 * dt);
       this.rightLegPivot.rotation.x = this.lerpAngle(this.rightLegPivot.rotation.x, 0, 12 * dt);
+      
       this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + breathe;
       this.torso.rotation.x = 0;
+      
       if (isKnife) {
         this.rightArmPivot.rotation.x = -0.75 + breathe * 0.5 + meleeArmRotX;
         this.rightArmPivot.rotation.y = 0.20 + meleeArmRotY;
-        this.leftArmPivot.rotation.x = 0.20 + breathe * 0.3; this.leftArmPivot.rotation.y = 0.10;
+        this.leftArmPivot.rotation.x = 0.20 + breathe * 0.3; 
+        this.leftArmPivot.rotation.y = 0.10;
       } else {
-        this.rightArmPivot.rotation.x = -1.15 + breathe * 0.5 + meleeArmRotX;
-        this.leftArmPivot.rotation.x = -1.05 - breathe * 0.5;
+        this.rightArmPivot.rotation.x = -1.25 + breathe * 0.5 + meleeArmRotX;
+        this.rightArmPivot.rotation.y = -0.25;
+        this.leftArmPivot.rotation.x = -1.45 - breathe * 0.5;
+        this.leftArmPivot.rotation.y = 0.35;
       }
     }
 
@@ -836,12 +861,15 @@ export class OpponentCharacter {
 
   setVisible(visible) {
     this.isAlive = visible;
-    if (this.torso) { this.torso.isVisible = visible; this.torso.isPickable = visible; }
-    if (this.head) { this.head.isVisible = visible; this.head.isPickable = visible; }
+    if (this.torso) this.torso.isVisible = visible;
+    if (this.head) this.head.isVisible = visible;
     if (this.leftArm) this.leftArm.isVisible = visible;
     if (this.rightArm) this.rightArm.isVisible = visible;
     if (this.leftLeg) this.leftLeg.isVisible = visible;
     if (this.rightLeg) this.rightLeg.isVisible = visible;
+    
+    if (this.headHitbox) { this.headHitbox.isPickable = visible; this.headHitbox.isVisible = visible && this.hitboxesWireframeVisible; }
+    if (this.bodyHitbox) { this.bodyHitbox.isPickable = visible; this.bodyHitbox.isVisible = visible && this.hitboxesWireframeVisible; }
 
     if (this.nameTagPlane) this.nameTagPlane.isVisible = visible;
     const isSniper = this.activeWeapon === 'sniper';
