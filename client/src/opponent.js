@@ -122,7 +122,7 @@ export class OpponentCharacter {
     visorMat.specularColor = new Color3(0.9, 0.9, 1.0);
 
     // ==========================================
-    // 1. TORSO & TACTICAL VEST
+    // 1. TORSO (Used as Torso Hitbox)
     // ==========================================
     this.torso = MeshBuilder.CreateBox(
       `sTorso_${this.id}`,
@@ -133,7 +133,7 @@ export class OpponentCharacter {
     this.torso.position.y = 1.25;
     this.torso.material = vestMat;
     
-    // --- USE VISUAL TORSO AS HITBOX ---
+    // USE VISUAL TORSO AS HITBOX
     this.torso.isPickable = true; 
     this.torso.metadata = {
       isHitbox: true,
@@ -142,35 +142,22 @@ export class OpponentCharacter {
       targetType: this.isBot ? 'bot' : 'player'
     };
 
-    // Tactical Vest Chest Plate (Not pickable so ray passes through to torso)
-    const chestPlate = MeshBuilder.CreateBox(`sChestPlate_${this.id}`, { width: 0.62, height: 0.44, depth: 0.08 }, this.scene);
-    chestPlate.parent = this.torso;
-    chestPlate.position = new Vector3(0, 0.12, 0.18);
-    chestPlate.material = accentMat;
-    chestPlate.isPickable = false;
-
-    // Ammo Pouches on Belt
-    for (let i = -1; i <= 1; i++) {
-      const pouch = MeshBuilder.CreateBox(`sPouch_${i}_${this.id}`, { width: 0.12, height: 0.15, depth: 0.08 }, this.scene);
-      pouch.parent = this.torso;
-      pouch.position = new Vector3(i * 0.18, -0.26, 0.19);
-      pouch.material = helmetMat;
-      pouch.isPickable = false;
-    }
+    // NOTE: The chest plate and pouches have been completely removed to fix the "rectangle" issue.
 
     // ==========================================
-    // 2. HEAD & TACTICAL COMBAT HELMET
+    // 2. HEAD (Used as Head Hitbox)
     // ==========================================
+    // Made the head slightly larger (0.50) so it's much easier to hit.
     this.head = MeshBuilder.CreateBox(
       `sHead_${this.id}`,
-      { width: 0.40, height: 0.42, depth: 0.40 },
+      { width: 0.50, height: 0.50, depth: 0.50 },
       this.scene
     );
     this.head.parent = this.rootNode;
     this.head.position.y = 1.88;
     this.head.material = skinMat;
     
-    // --- USE VISUAL HEAD AS HITBOX ---
+    // USE VISUAL HEAD AS HITBOX
     this.head.isPickable = true;
     this.head.metadata = {
       isHitbox: true,
@@ -179,10 +166,10 @@ export class OpponentCharacter {
       targetType: this.isBot ? 'bot' : 'player'
     };
 
-    // Tactical Fast-Ops Helmet (Not pickable so ray passes through to head)
+    // Tactical Helmet (isPickable = false so bullets pass through it to hit the head)
     const helmet = MeshBuilder.CreateSphere(
       `sHelmet_${this.id}`,
-      { diameterX: 0.48, diameterY: 0.42, diameterZ: 0.50, segments: 8 },
+      { diameterX: 0.52, diameterY: 0.48, diameterZ: 0.54, segments: 8 },
       this.scene
     );
     helmet.parent = this.head;
@@ -190,7 +177,7 @@ export class OpponentCharacter {
     helmet.material = helmetMat;
     helmet.isPickable = false;
 
-    // Tactical Night Vision Goggles / Sun Visor
+    // Tactical Visor
     const visor = MeshBuilder.CreateBox(
       `sVisor_${this.id}`,
       { width: 0.34, height: 0.12, depth: 0.14 },
@@ -201,16 +188,6 @@ export class OpponentCharacter {
     visor.material = visorMat;
     visor.isPickable = false;
 
-    // Tactical Headset Ear Cups
-    [-0.22, 0.22].forEach((x, idx) => {
-      const earCup = MeshBuilder.CreateCylinder(`sEarCup_${idx}_${this.id}`, { height: 0.06, diameter: 0.12 }, this.scene);
-      earCup.parent = this.head;
-      earCup.rotation.z = Math.PI / 2;
-      earCup.position.set(x, 0.02, 0);
-      earCup.material = helmetMat;
-      earCup.isPickable = false;
-    });
-
     // ==========================================
     // 3. UPPER BODY AIM PIVOT & ARMS
     // ==========================================
@@ -218,7 +195,7 @@ export class OpponentCharacter {
     this.upperBodyAimPivot.parent = this.rootNode;
     this.upperBodyAimPivot.position.set(0, 1.45, 0);
 
-    // Right Arm (Weapon Grip)
+    // Right Arm
     this.rightArmPivot = new TransformNode(`sRightArmPivot_${this.id}`, this.scene);
     this.rightArmPivot.parent = this.upperBodyAimPivot;
     this.rightArmPivot.position = new Vector3(0.44, 0.12, -0.04);
@@ -233,13 +210,7 @@ export class OpponentCharacter {
     this.rightArm.material = vestMat;
     this.rightArm.isPickable = false; // Ignored by raycast
 
-    const rightHand = MeshBuilder.CreateBox(`sRightHand_${this.id}`, { width: 0.22, height: 0.18, depth: 0.22 }, this.scene);
-    rightHand.parent = this.rightArm;
-    rightHand.position = new Vector3(0, -0.28, 0);
-    rightHand.material = helmetMat;
-    rightHand.isPickable = false;
-
-    // Left Arm (Rifle Fore-end / Combat Support)
+    // Left Arm
     this.leftArmPivot = new TransformNode(`sLeftArmPivot_${this.id}`, this.scene);
     this.leftArmPivot.parent = this.upperBodyAimPivot;
     this.leftArmPivot.position = new Vector3(-0.44, 0.12, 0);
@@ -254,16 +225,9 @@ export class OpponentCharacter {
     this.leftArm.material = vestMat;
     this.leftArm.isPickable = false; // Ignored by raycast
 
-    const leftHand = MeshBuilder.CreateBox(`sLeftHand_${this.id}`, { width: 0.22, height: 0.18, depth: 0.22 }, this.scene);
-    leftHand.parent = this.leftArm;
-    leftHand.position = new Vector3(0, -0.28, 0);
-    leftHand.material = helmetMat;
-    leftHand.isPickable = false;
-
     // ==========================================
     // 4. WEAPONS: SNIPER RIFLE & COMBAT KNIFE
     // ==========================================
-    // 4A. Held Heavy Sniper Rifle
     this.sniperRifleMesh = new TransformNode(`sHeldSniper_${this.id}`, this.scene);
     this.sniperRifleMesh.parent = this.upperBodyAimPivot;
     this.sniperRifleMesh.position = new Vector3(0.20, -0.10, 0.40);
@@ -280,20 +244,7 @@ export class OpponentCharacter {
     gunBarrel.material = weaponMat;
     gunBarrel.isPickable = false;
 
-    const gunBrake = MeshBuilder.CreateBox(`sGunBrake_${this.id}`, { width: 0.08, height: 0.06, depth: 0.14 }, this.scene);
-    gunBrake.parent = this.sniperRifleMesh;
-    gunBrake.position = new Vector3(0, 0.02, 0.92);
-    gunBrake.material = weaponMat;
-    gunBrake.isPickable = false;
-
-    const gunScope = MeshBuilder.CreateCylinder(`sGunScope_${this.id}`, { height: 0.36, diameter: 0.052 }, this.scene);
-    gunScope.parent = this.sniperRifleMesh;
-    gunScope.rotation.x = Math.PI / 2;
-    gunScope.position = new Vector3(0, 0.10, 0.06);
-    gunScope.material = weaponMat;
-    gunScope.isPickable = false;
-
-    // SCOPE GLINT / LENS FLARE (Visible when remote player is scoped in!)
+    // SCOPE GLINT
     this.scopeGlintMesh = MeshBuilder.CreatePlane(`sScopeGlint_${this.id}`, { size: 0.5 }, this.scene);
     this.scopeGlintMesh.parent = this.sniperRifleMesh;
     this.scopeGlintMesh.position = new Vector3(0, 0.10, 0.28);
@@ -319,7 +270,6 @@ export class OpponentCharacter {
     this.scopeGlintMesh.isVisible = false;
     this.scopeGlintMesh.isPickable = false;
 
-    // Muzzle tip for bot/player shots
     this.muzzleTip = MeshBuilder.CreateBox(`sMuzzleTip_${this.id}`, { size: 0.01 }, this.scene);
     this.muzzleTip.parent = this.sniperRifleMesh;
     this.muzzleTip.position = new Vector3(0, 0.02, 1.02);
@@ -335,22 +285,16 @@ export class OpponentCharacter {
     this.muzzleFlash.isVisible = false;
     this.muzzleFlash.isPickable = false;
 
-    // 4B. Held Tactical Combat Knife
+    // Knife
     this.combatKnifeMesh = new TransformNode(`sHeldKnife_${this.id}`, this.scene);
     this.combatKnifeMesh.parent = this.upperBodyAimPivot;
     this.combatKnifeMesh.position = new Vector3(0.24, -0.06, 0.32);
-    this.combatKnifeMesh.setEnabled(false); // Initially hidden while sniper active
+    this.combatKnifeMesh.setEnabled(false); 
 
     const kHandle = MeshBuilder.CreateBox(`sKHandle_${this.id}`, { width: 0.04, height: 0.05, depth: 0.16 }, this.scene);
     kHandle.parent = this.combatKnifeMesh;
     kHandle.material = helmetMat;
     kHandle.isPickable = false;
-
-    const kGuard = MeshBuilder.CreateBox(`sKGuard_${this.id}`, { width: 0.05, height: 0.08, depth: 0.02 }, this.scene);
-    kGuard.parent = this.combatKnifeMesh;
-    kGuard.position = new Vector3(0, 0, 0.09);
-    kGuard.material = weaponMat;
-    kGuard.isPickable = false;
 
     const kBlade = MeshBuilder.CreateBox(`sKBlade_${this.id}`, { width: 0.016, height: 0.06, depth: 0.24 }, this.scene);
     kBlade.parent = this.combatKnifeMesh;
@@ -358,7 +302,7 @@ export class OpponentCharacter {
     kBlade.material = steelMat;
     kBlade.isPickable = false;
 
-    // Default 2-handed forward rifle posture
+    // Default posture
     this.rightArmPivot.rotation.x = -1.15;
     this.rightArmPivot.rotation.y = -0.22;
     this.leftArmPivot.rotation.x = -1.05;
@@ -422,7 +366,6 @@ export class OpponentCharacter {
     this.shieldSphere.isPickable = false;
   }
 
-  // Floating Billboard with Callsign & Mini HP Bar
   createFloatingNameTag() {
     this.nameTagPlane = MeshBuilder.CreatePlane(`nameTagPlane_${this.id}`, { width: 1.8, height: 0.45 }, this.scene);
     this.nameTagPlane.parent = this.rootNode;
@@ -448,7 +391,6 @@ export class OpponentCharacter {
     const ctx = this.nameTagTexture.getContext();
     ctx.clearRect(0, 0, 256, 64);
 
-    // Background pill (with cross-browser fallback for roundRect)
     ctx.fillStyle = 'rgba(10, 15, 26, 0.75)';
     ctx.beginPath();
     if (typeof ctx.roundRect === 'function') {
@@ -461,17 +403,14 @@ export class OpponentCharacter {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Callsign Name
     ctx.fillStyle = this.playerNumber === 1 ? '#ff6b81' : (this.isBot ? '#ffa502' : '#70a1ff');
     ctx.font = 'bold 20px Rajdhani, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(this.name.toUpperCase(), 128, 28);
 
-    // Mini Health Bar Background
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(28, 38, 200, 12);
 
-    // Mini Health Bar Fill (green -> yellow -> red)
     const pct = Math.max(0, Math.min(1.0, this.health / 100));
     let hpColor = '#10b981';
     if (pct < 0.35) {
@@ -633,7 +572,6 @@ export class OpponentCharacter {
   setHitboxesWireframe(visible) {
     this.hitboxesWireframeVisible = !!visible;
     
-    // Use the visual head and torso for debug wireframe
     const hitboxes = [this.head, this.torso]; 
 
     if (visible && !this.debugWireframeMat) {
@@ -648,7 +586,6 @@ export class OpponentCharacter {
       if (visible) {
         m.material = this.debugWireframeMat;
       } else {
-        // Restore original material
         m.material = (m === this.head) ? this.skinMat : this.vestMat;
       }
     });
@@ -788,7 +725,6 @@ export class OpponentCharacter {
 
     const dt = Math.min(0.08, deltaTime / 1000);
 
-    // Ragdoll physics simulation
     if (this.isRagdoll) {
       this.animState = 'ragdoll';
       this.ragdollTime += dt;
@@ -817,18 +753,15 @@ export class OpponentCharacter {
       return;
     }
 
-    // Crouch height and visual adaptation
     const targetCrouchFactor = this.isCrouching ? 1.0 : 0.0;
     this.crouchFactor = this.crouchFactor !== undefined
       ? this.crouchFactor + (targetCrouchFactor - this.crouchFactor) * Math.min(1.0, 14 * dt)
       : targetCrouchFactor;
 
-    // Update visual meshes (which are now the hitboxes)
     if (this.head) this.head.position.y = 1.88 - this.crouchFactor * 0.73;
     if (this.torso) this.torso.position.y = 1.25 - this.crouchFactor * 0.50;
     if (this.upperBodyAimPivot) this.upperBodyAimPivot.position.y = 1.45 - this.crouchFactor * 0.50;
 
-    // Muzzle flash decay
     if (this.muzzleFlashTimer > 0) {
       this.muzzleFlashTimer -= dt;
       if (this.muzzleFlashTimer <= 0 && this.muzzleFlash) {
@@ -836,7 +769,6 @@ export class OpponentCharacter {
       }
     }
 
-    // Melee slash visual
     let meleeArmRotX = 0;
     let meleeArmRotY = 0;
     if (this.meleeSwingTimer > 0) {
@@ -846,17 +778,15 @@ export class OpponentCharacter {
       meleeArmRotY = -Math.sin(progress * Math.PI) * 0.6;
     }
 
-    // Upper body vertical aim pitch
     this.upperBodyAimPivot.rotation.x = this.lerpAngle(
       this.upperBodyAimPivot.rotation.x,
       this.aimPitch,
       14 * dt
     );
 
-    // Section D: Adaptive Interpolation from snapshotBuffer
     let moveSpeed = currentSpeed;
     const estimatedServerTime = Date.now() + (this.serverClockOffset || 0);
-    const renderTimestamp = estimatedServerTime - 100; // 100 ms target delay
+    const renderTimestamp = estimatedServerTime - 100;
 
     if (this.positionBuffer.length >= 2) {
       const oldest = this.positionBuffer[0];
@@ -956,7 +886,6 @@ export class OpponentCharacter {
       }
     }
 
-    // Section E: Animation derived from actual speed & synced flags
     this.lastInterpolatedSpeed = moveSpeed;
     if (this.meleeSwingTimer > 0) {
       this.animState = 'swing';
@@ -1017,7 +946,6 @@ export class OpponentCharacter {
       }
     }
 
-    // Section I: Floating name tag scaling with distance & minimum on-screen size
     if (this.scene.activeCamera) {
       const camPos = this.scene.activeCamera.position;
       const dist = Vector3.Distance(camPos, this.rootNode.position);
@@ -1038,7 +966,6 @@ export class OpponentCharacter {
     this.rotationY = this.rootNode.rotation.y;
   }
 
-  // Telemetry strings for Section J Debug Overlay
   getDebugPosString() {
     const rcv = this.lastReceivedPos ? `${this.lastReceivedPos.x.toFixed(1)},${this.lastReceivedPos.z.toFixed(1)}` : '--';
     const rend = `${this.rootNode.position.x.toFixed(1)},${this.rootNode.position.z.toFixed(1)}`;
@@ -1071,11 +998,11 @@ export class OpponentCharacter {
     
     if (this.torso) {
       this.torso.isVisible = visible;
-      this.torso.isPickable = visible; // Make torso pickable only when alive
+      this.torso.isPickable = visible; 
     }
     if (this.head) {
       this.head.isVisible = visible;
-      this.head.isPickable = visible; // Make head pickable only when alive
+      this.head.isPickable = visible; 
     }
     
     if (this.leftArm) this.leftArm.isVisible = visible;
