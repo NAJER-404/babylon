@@ -37,10 +37,14 @@ export class BulletCam {
       new Vector3(0, 2, 0),
       this.scene
     );
-    this.bulletCamera.minZ = 0.05;
-    this.bulletCamera.maxZ = 550;
+    this.bulletCamera.minZ = 0.1;
+    this.bulletCamera.maxZ = 1200;
     this.bulletCamera.fov = 1.32;
     this.bulletCamera.inputs.clear();
+    // Maintain playerCamera as default activeCamera
+    if (this.playerCamera) {
+      this.scene.activeCamera = this.playerCamera;
+    }
 
     // Perspective: 'shooter' or 'victim'
     this.perspective = 'shooter';

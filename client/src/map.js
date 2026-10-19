@@ -68,11 +68,23 @@ export class MapBuilder {
     dirLight.intensity = 0.72;
     dirLight.diffuse = new Color3(1.0, 0.98, 0.92);
 
-    // Optimized 1024 shadow map with fitted frustum
-    this.shadowGenerator = new ShadowGenerator(1024, dirLight);
-    this.shadowGenerator.usePercentageCloserFiltering = true;
-    this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_LOW;
-    this.shadowGenerator.bias = 0.003;
+    // Optimized shadow generator with safe fallback for all WebGL tiers
+    try {
+      this.shadowGenerator = new ShadowGenerator(1024, dirLight);
+      this.shadowGenerator.usePercentageCloserFiltering = true;
+      this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_LOW;
+      this.shadowGenerator.bias = 0.003;
+    } catch (shadowErr) {
+      console.warn('[MapBuilder] PCF Shadow fallback:', shadowErr);
+      try {
+        this.shadowGenerator = new ShadowGenerator(1024, dirLight);
+        this.shadowGenerator.usePoissonSampling = true;
+      } catch (e) {
+        console.warn('[MapBuilder] Shadow generator disabled:', e);
+        this.shadowGenerator = null;
+      }
+    }
+    console.log('[MapBuilder] Lighting setup completed.');
   }
 
   safeColor(hex, fallback = '#ffffff') {
@@ -149,7 +161,7 @@ export class MapBuilder {
   }
 
   createSkybox() {
-    const skybox = MeshBuilder.CreateBox('skyBox', { size: 900.0 }, this.scene);
+    const skybox = MeshBuilder.CreateBox('skyBox', { size: 1000.0 }, this.scene);
     const skyMat = new StandardMaterial('skyMat', this.scene);
     skyMat.backFaceCulling = false;
     skyMat.disableLighting = true;
@@ -163,6 +175,23 @@ export class MapBuilder {
 
   createFloor() {
     const size = CONFIG.GAME.MAP_SIZE; // 160
+
+    // Safety Fallback Base Floor: Always visible, never unrendered
+    const fallbackFloor = MeshBuilder.CreateBox(
+      'fallbackGround',
+      { width: size * 1.5, height: 1.0, depth: size * 1.5 },
+      this.scene
+    );
+    fallbackFloor.position.y = -1.2;
+    const fallbackMat = new StandardMaterial('fallbackGroundMat', this.scene);
+    fallbackMat.diffuseColor = new Color3(0.18, 0.22, 0.28);
+    fallbackMat.emissiveColor = new Color3(0.08, 0.10, 0.14);
+    fallbackFloor.material = fallbackMat;
+    fallbackFloor.checkCollisions = true;
+    fallbackFloor.isPickable = true;
+    this.staticMeshes.push(fallbackFloor);
+
+    // Primary Arena Floor
     const floor = MeshBuilder.CreateBox(
       'arenaFloor',
       { width: size, height: 1.0, depth: size },
@@ -189,6 +218,7 @@ export class MapBuilder {
             this.scene
           );
           tile.position.set(x * gridStep + gridStep / 2, 0.01, z * gridStep + gridStep / 2);
+          tile.computeWorldMatrix(true);
           tileMeshes.push(tile);
         }
       }
@@ -728,9 +758,8 @@ export class MapBuilder {
   optimizeStaticMeshes() {
     this.staticMeshes.forEach(mesh => {
       mesh.freezeWorldMatrix();
-      if (mesh.material && typeof mesh.material.freeze === 'function') {
-        mesh.material.freeze();
-      }
+      // NOTE: Do not freeze materials before the initial GPU compilation, as it causes uncompiled shaders to render as black.
     });
+    console.log(`[MapBuilder] Arena generated. Total meshes in scene: ${this.scene.meshes.length}`);
   }
 }

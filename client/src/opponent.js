@@ -7,8 +7,7 @@ import {
   Vector3,
   TransformNode,
   DynamicTexture,
-  Mesh,
-  HighlightLayer
+  Mesh
 } from '@babylonjs/core';
 import { CONFIG } from './config.js';
 
@@ -57,9 +56,6 @@ export class OpponentCharacter {
     // Hitbox debug wireframe state
     this.debugWireframeMat = null;
     this.hitboxesWireframeVisible = false;
-
-    // Visual enhancement (Section I)
-    this.highlightLayer = null;
 
     // Ragdoll state
     this.isRagdoll = false;
@@ -457,22 +453,6 @@ export class OpponentCharacter {
     this.shieldSphere.material = shieldMat;
     this.shieldSphere.isVisible = false;
     this.shieldSphere.isPickable = false;
-
-    // Section I: Babylon HighlightLayer team-colored outline/glow for high visibility
-    try {
-      this.highlightLayer = new HighlightLayer(`hl_opp_${this.id}`, this.scene, {
-        isStroke: true,
-        blurHorizontalSize: 1.0,
-        blurVerticalSize: 1.0
-      });
-      const glowCol = this.playerNumber === 1 ? new Color3(1.0, 0.25, 0.25) : new Color3(0.0, 0.85, 1.0);
-      if (this.torso) this.highlightLayer.addMesh(this.torso, glowCol);
-      if (this.head) this.highlightLayer.addMesh(this.head, glowCol);
-      if (this.leftArm) this.highlightLayer.addMesh(this.leftArm, glowCol);
-      if (this.rightArm) this.highlightLayer.addMesh(this.rightArm, glowCol);
-    } catch (e) {
-      console.warn('[Opponent] HighlightLayer setup fallback:', e);
-    }
   }
 
   // Floating Billboard with Callsign & Mini HP Bar
@@ -1160,12 +1140,8 @@ export class OpponentCharacter {
   }
 
   dispose() {
-    if (this.highlightLayer) {
-      try {
-        this.highlightLayer.dispose();
-      } catch (e) {}
-      this.highlightLayer = null;
+    if (this.rootNode) {
+      this.rootNode.dispose();
     }
-    this.rootNode.dispose();
   }
 }

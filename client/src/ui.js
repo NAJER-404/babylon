@@ -87,6 +87,13 @@ export class UIManager {
       speed: document.getElementById('debug-speed'),
       killCamState: document.getElementById('debug-killcam-state'),
       timeScale: document.getElementById('debug-timescale'),
+      camera: document.getElementById('debug-camera'),
+      meshes: document.getElementById('debug-meshes'),
+      lights: document.getElementById('debug-lights'),
+      renderLoop: document.getElementById('debug-render-loop'),
+      canvasSize: document.getElementById('debug-canvas-size'),
+      webgl: document.getElementById('debug-webgl'),
+      lastError: document.getElementById('debug-last-error'),
       clientHitboxBtn: document.getElementById('btn-toggle-client-hitboxes'),
       serverHitboxBtn: document.getElementById('btn-toggle-server-hitboxes'),
       simLatencySelect: document.getElementById('select-debug-latency'),
@@ -496,6 +503,28 @@ export class UIManager {
     }
     if (this.debug.timeScale !== undefined && data.timeScale !== undefined) {
       this.debug.timeScale.textContent = `${data.timeScale.toFixed(2)}x`;
+    }
+    if (this.debug.camera && data.camera) {
+      this.debug.camera.textContent = data.camera;
+    }
+    if (this.debug.meshes && data.meshes) {
+      this.debug.meshes.textContent = data.meshes;
+    }
+    if (this.debug.lights && data.lights !== undefined) {
+      this.debug.lights.textContent = String(data.lights);
+    }
+    if (this.debug.renderLoop && data.renderLoop) {
+      this.debug.renderLoop.textContent = data.renderLoop;
+    }
+    if (this.debug.canvasSize && data.canvasSize) {
+      this.debug.canvasSize.textContent = data.canvasSize;
+    }
+    if (this.debug.webgl && data.webgl) {
+      this.debug.webgl.textContent = data.webgl;
+    }
+    if (this.debug.lastError) {
+      this.debug.lastError.textContent = data.lastError || 'None';
+      this.debug.lastError.style.color = (data.lastError && data.lastError !== 'None') ? '#ef4444' : '#4ade80';
     }
     if (this.debug.eventsList && Array.isArray(data.events)) {
       if (data.events.length === 0) {

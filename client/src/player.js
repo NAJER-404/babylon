@@ -68,8 +68,8 @@ export class PlayerController {
       this.scene
     );
     this.camera.fov = CONFIG.PLAYER.DEFAULT_FOV;
-    this.camera.minZ = 0.05;
-    this.camera.maxZ = 550;
+    this.camera.minZ = 0.1;
+    this.camera.maxZ = 1200;
 
     this.colliderMesh = MeshBuilder.CreateBox(
       'playerCollider',

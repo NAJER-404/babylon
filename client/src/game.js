@@ -1,12 +1,29 @@
-// Game Coordinator: 1v1 Arena, Dual-Perspective Kill Cam, 3-2-1 Countdown, Weapon Switching & Net Sync
 import {
   Engine,
   Scene,
   Vector3,
   MeshBuilder,
   StandardMaterial,
-  Color3
+  Color3,
+  Color4
 } from '@babylonjs/core';
+
+// Side-effect imports for @babylonjs/core (prevents tree-shaking in Vite production builds)
+import '@babylonjs/core/Materials/standardMaterial';
+import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
+import '@babylonjs/core/Rendering/depthRendererSceneComponent';
+import '@babylonjs/core/Collisions/collisionCoordinator';
+import '@babylonjs/core/Meshes/Builders/boxBuilder';
+import '@babylonjs/core/Meshes/Builders/planeBuilder';
+import '@babylonjs/core/Meshes/Builders/groundBuilder';
+import '@babylonjs/core/Meshes/Builders/sphereBuilder';
+import '@babylonjs/core/Meshes/Builders/cylinderBuilder';
+import '@babylonjs/core/Meshes/Builders/linesBuilder';
+import '@babylonjs/core/Particles/particleSystemComponent';
+import '@babylonjs/core/Culling/ray';
+import '@babylonjs/core/Animations/animatable';
+import '@babylonjs/core/Helpers/sceneHelpers';
+
 import { CONFIG } from './config.js';
 import { AudioManager } from './audio.js';
 import { MapBuilder } from './map.js';
@@ -72,27 +89,62 @@ export class Game {
     this.scopeOverlay = null;
     this.xrayEffect = null;
     this.bloodEffect = null;
-    this.bulletCam = null;
+    // Safety net & debug state (Step 1 & 2)
+    this.isRenderLoopRunning = false;
+    this.lastRenderError = 'None';
+    this.safetyWatchdogTimer = null;
 
     this.init();
   }
 
   init() {
     try {
-      // 1. Babylon.js Engine & Scene
-      this.engine = new Engine(this.canvas, true, {
-        preserveDrawingBuffer: false,
-        stencil: false,
-        powerPreference: 'high-performance'
-      });
+      // 1. Babylon.js Engine & Scene with WebGL context resilience
+      try {
+        this.engine = new Engine(this.canvas, true, {
+          preserveDrawingBuffer: false,
+          stencil: false,
+          powerPreference: 'high-performance'
+        });
+      } catch (glErr) {
+        console.warn('[Game] High-performance WebGL2 init failed, falling back:', glErr);
+        this.engine = new Engine(this.canvas, true, {
+          preserveDrawingBuffer: false,
+          stencil: false,
+          disableWebGL2Support: true
+        });
+      }
       this.engine.setHardwareScalingLevel(1.0);
 
+      // WebGL Context Lost & Restored observers (Step 1 item 10)
+      if (this.engine.onContextLostObservable) {
+        this.engine.onContextLostObservable.add(() => {
+          console.error('[Engine] WebGL Context Lost!');
+          this.lastRenderError = 'WebGL Context Lost';
+        });
+      }
+      if (this.engine.onContextRestoredObservable) {
+        this.engine.onContextRestoredObservable.add(() => {
+          console.log('[Engine] WebGL Context Restored! Re-initializing canvas view...');
+          this.lastRenderError = 'WebGL Context Restored';
+          this.engine.resize();
+        });
+      }
+
       this.scene = new Scene(this.engine);
+      this.scene.clearColor = new Color4(0.35, 0.65, 0.95, 1.0);
       this.scene.collisionsEnabled = true;
       this.scene.gravity = new Vector3(0, CONFIG.PLAYER.GRAVITY, 0);
       this.scene.skipPointerMovePicking = true;
       this.scene.autoClear = true;
       this.scene.autoClearDepthAndStencil = true;
+
+      if (this.scene.onErrorObservable) {
+        this.scene.onErrorObservable.add((err) => {
+          console.error('[Scene Error Observable]:', err);
+          this.lastRenderError = err?.message || String(err);
+        });
+      }
 
       // 2. Build 160x160 3D Arena
       this.mapBuilder = new MapBuilder(this.scene);
@@ -587,9 +639,13 @@ export class Game {
     this.ui.updateKillCounter(0, CONFIG.GAME.SCORE_TO_WIN);
     this.ui.updatePing(0);
     this.ui.showHUD();
-    this.ui.startMatchTimer();
-
     this.player.requestPointerLock();
+
+    // Step 2 Safety Net Watchdog: verifies active meshes and camera health 2 seconds after match start
+    if (this.safetyWatchdogTimer) clearTimeout(this.safetyWatchdogTimer);
+    this.safetyWatchdogTimer = setTimeout(() => {
+      this.runRenderSafetyCheck();
+    }, 2000);
   }
 
   startOnlineMatch(matchData) {
@@ -676,6 +732,44 @@ export class Game {
     this.ui.showHUD();
 
     this.player.requestPointerLock();
+
+    // Step 2 Safety Net Watchdog: verifies active meshes and camera health 2 seconds after online start
+    if (this.safetyWatchdogTimer) clearTimeout(this.safetyWatchdogTimer);
+    this.safetyWatchdogTimer = setTimeout(() => {
+      this.runRenderSafetyCheck();
+    }, 2000);
+  }
+
+  runRenderSafetyCheck() {
+    if (this.mode === GAME_MODE.NONE || !this.scene) return;
+
+    const activeMeshes = this.scene.getActiveMeshes().length;
+    const totalMeshes = this.scene.meshes.length;
+    const cam = this.scene.activeCamera;
+    const isCamInvalid = !cam || !Number.isFinite(cam.position.x) || !Number.isFinite(cam.position.y) || !Number.isFinite(cam.position.z) || cam.position.y < -5 || cam.position.y > 100;
+
+    console.log(`[Safety Watchdog Check] Total meshes: ${totalMeshes}, Active meshes: ${activeMeshes}, Camera: ${cam?.name || 'none'} (${cam?.position?.x?.toFixed(1)}, ${cam?.position?.y?.toFixed(1)}, ${cam?.position?.z?.toFixed(1)})`);
+
+    if (activeMeshes === 0 || isCamInvalid) {
+      console.warn(`[SAFETY NET TRIGGERED] activeMeshes=${activeMeshes}, isCamInvalid=${isCamInvalid}. Rebuilding map & resetting camera.`);
+      this.lastRenderError = `Safety net: ${activeMeshes === 0 ? '0 active meshes' : 'invalid camera'}`;
+
+      if (this.player && this.player.camera) {
+        this.scene.activeCamera = this.player.camera;
+        this.player.camera.minZ = 0.1;
+        this.player.camera.maxZ = 1200;
+        const spawn = this.mode === GAME_MODE.ONLINE
+          ? CONFIG.GAME.SPAWNS[this.player.playerNumber === 2 ? 1 : 0]
+          : CONFIG.GAME.SPAWNS[0];
+        this.player.spawnAt(spawn, this.player.playerNumber || 1);
+      }
+
+      this.scene.meshes.forEach(m => {
+        try { m.unfreezeWorldMatrix(); } catch (e) {}
+      });
+
+      this.engine.resize();
+    }
   }
 
   handlePlayerAttack() {
@@ -938,10 +1032,15 @@ export class Game {
         );
       }
 
-      // 11. Performance & Telemetry Debug Overlay Update (Section J)
+      // 11. Performance & Telemetry Debug Overlay Update (Section J & Step 2)
+      this.isRenderLoopRunning = true;
       this.debugUpdateTimer += rawDt;
       if (this.debugUpdateTimer >= 150) {
         this.debugUpdateTimer = 0;
+        const cam = this.scene.activeCamera;
+        const camStr = cam ? `${cam.name} (${cam.position.x.toFixed(1)}, ${cam.position.y.toFixed(1)}, ${cam.position.z.toFixed(1)})` : 'NONE';
+        const glRenderer = (this.engine.getGlInfo ? this.engine.getGlInfo().renderer : 'WebGL') || 'WebGL';
+
         this.ui.updateDebugMetrics({
           localId: this.localId || this.network.localId || '--',
           remoteId: this.remoteId || this.network.remoteId || '--',
@@ -963,11 +1062,19 @@ export class Game {
           speed: this.player.currentSpeed || 0,
           killCamState: this.bulletCam.camState,
           timeScale: timeManager.timeScale,
-          events: this.network.recentEvents
+          events: this.network.recentEvents,
+          camera: camStr,
+          meshes: `${this.scene.getActiveMeshes().length} / ${this.scene.meshes.length}`,
+          lights: this.scene.lights.length,
+          renderLoop: this.isRenderLoopRunning ? 'RUNNING' : 'STOPPED',
+          canvasSize: `${this.canvas.width} x ${this.canvas.height}`,
+          webgl: glRenderer,
+          lastError: this.lastRenderError || 'None'
         });
         this.ui.updatePing(this.network.smoothedPing, this.network.jitter);
       }
     } catch (err) {
+      this.lastRenderError = err?.message || String(err);
       if (!this._hasReportedRenderError) {
         this._hasReportedRenderError = true;
         console.error('[Render Loop Subsystem Error]:', err);
@@ -977,6 +1084,7 @@ export class Game {
     try {
       this.scene.render();
     } catch (renderErr) {
+      this.lastRenderError = renderErr?.message || String(renderErr);
       if (!this._hasReportedSceneRenderError) {
         this._hasReportedSceneRenderError = true;
         console.error('[Scene.render Error]:', renderErr);
