@@ -1,4 +1,4 @@
-// High-Fidelity Humanoid Soldier Model with Massive Hitboxes & Fast Running Animations
+// High-Fidelity Humanoid Soldier Model with Massive Hitboxes
 import {
   MeshBuilder,
   StandardMaterial,
@@ -124,7 +124,7 @@ export class OpponentCharacter {
     this.torso.parent = this.rootNode;
     this.torso.position.y = 1.25;
     this.torso.material = vestMat;
-    this.torso.isPickable = false; // Hitbox handles picking
+    this.torso.isPickable = false; 
 
     const chestPlate = MeshBuilder.CreateBox(`sChestPlate_${this.id}`, { width: 0.62, height: 0.44, depth: 0.08 }, this.scene);
     chestPlate.parent = this.torso;
@@ -183,10 +183,10 @@ export class OpponentCharacter {
     });
 
     // ==========================================
-    // 3. DEDICATED INVISIBLE HITBOXES (HUGE FOR EASY HITS)
+    // 3. DEDICATED INVISIBLE HITBOXES (MASSIVE)
     // ==========================================
-    // Massive Head Hitbox (1.0 diameter sphere)
-    this.headHitbox = MeshBuilder.CreateSphere(`hitbox_head_${this.id}`, { diameter: 1.0, segments: 8 }, this.scene);
+    // EXTREMELY LARGE Head Hitbox (1.2 x 1.2 x 1.2 box covering the head and neck)
+    this.headHitbox = MeshBuilder.CreateBox(`hitbox_head_${this.id}`, { width: 1.2, height: 1.2, depth: 1.2 }, this.scene);
     this.headHitbox.parent = this.rootNode;
     this.headHitbox.position.y = 1.95;
     this.headHitbox.isVisible = false;
@@ -334,7 +334,6 @@ export class OpponentCharacter {
     kBlade.material = steelMat;
     kBlade.isPickable = false;
 
-    // PROPER TWO-HANDED RIFLE POSE
     this.rightArmPivot.rotation.x = -1.25;
     this.rightArmPivot.rotation.y = -0.25;
     this.rightArmPivot.rotation.z = 0.1;
@@ -377,7 +376,6 @@ export class OpponentCharacter {
     rightBoot.material = bootsMat;
     rightBoot.isPickable = false;
 
-    // Spawn Protection Shield
     this.shieldSphere = MeshBuilder.CreateSphere(`soldierShield_${this.id}`, { diameter: 2.6, segments: 16 }, this.scene);
     this.shieldSphere.parent = this.rootNode;
     this.shieldSphere.position.y = 1.2;

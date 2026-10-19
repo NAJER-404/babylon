@@ -12,11 +12,11 @@ const HEAD_DAMAGE = 200;
 const LEG_DAMAGE = 80;
 const MELEE_DAMAGE = 100;
 const MELEE_MAX_DISTANCE = 2.7;
-const KILL_CAM_DURATION_MS = 6000; // 6 seconds
+const KILL_CAM_DURATION_MS = 6000;
 const RESPAWN_DELAY_AFTER_KILLCAM_MS = 1200;
 const SPAWN_PROTECTION_MS = 2000;
 const ROOM_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
-const MAX_REWIND_MS = 500; // Increased from 300 to handle high ping better
+const MAX_REWIND_MS = 500;
 const POSITION_HISTORY_SIZE = 35;
 
 export class RoomManager {
@@ -290,8 +290,6 @@ export class RoomManager {
     if (target.isProtected && now < target.protectedUntil) { this.logShot(shooter, shotId, 0, 0, false, null, 'protected'); return; }
     else if (target.isProtected && now >= target.protectedUntil) target.isProtected = false;
 
-    // ORIGIN CHECK REMOVED to prevent long-range ghost bullets
-    
     const origin = shootData.origin || shooter.position;
 
     const clientEst = Number(shootData.estimatedServerTime || shootData.timestamp || (now - 120));
@@ -499,15 +497,14 @@ export class RoomManager {
     const dx = direction.x / len; const dy = direction.y / len; const dz = direction.z / len;
     const dir = { x: dx, y: dy, z: dz };
 
-    // Massively increased head radius from 0.65 to 1.0
+    // MASSIVELY INCREASED HEAD RADIUS TO 1.5 (3 meters diameter)
     const headY = targetPos.y + (isCrouching ? 1.35 : 1.95);
     const headCenter = { x: targetPos.x, y: headY, z: targetPos.z };
-    const headHit = this.intersectRaySphere(origin, dir, headCenter, 1.0);
+    const headHit = this.intersectRaySphere(origin, dir, headCenter, 1.5);
 
-    // Massively increased torso radius from 0.90 to 1.5
     const bodyMinY = targetPos.y + (isCrouching ? 0.40 : 0.75);
     const bodyMaxY = targetPos.y + (isCrouching ? 1.40 : 1.75);
-    const bodyHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, bodyMinY, bodyMaxY, 1.5);
+    const bodyHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, bodyMinY, bodyMaxY, 1.0);
 
     const legsMinY = targetPos.y + 0.05;
     const legsMaxY = targetPos.y + (isCrouching ? 0.40 : 0.75);
