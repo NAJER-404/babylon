@@ -1,4 +1,4 @@
-// High-Fidelity Humanoid Soldier Model with Fast Running Animations & Two-Handed Grip
+// High-Fidelity Humanoid Soldier Model with Massive Hitboxes & Fast Running Animations
 import {
   MeshBuilder,
   StandardMaterial,
@@ -63,7 +63,6 @@ export class OpponentCharacter {
   createHumanoidCharacter() {
     this.rootNode = new TransformNode(`humanoidSoldier_${this.id}`, this.scene);
 
-    // Team vest colors
     let vestColorHex = CONFIG.COLORS.TEAM_BLUE_VEST;
     let accentColorHex = CONFIG.COLORS.TEAM_BLUE_ACCENT;
 
@@ -75,7 +74,6 @@ export class OpponentCharacter {
       accentColorHex = CONFIG.COLORS.TEAM_RED_ACCENT;
     }
 
-    // --- MATERIALS ---
     const vestMat = new StandardMaterial(`soldierVest_${this.id}`, this.scene);
     vestMat.diffuseColor = Color3.FromHexString(vestColorHex);
     vestMat.emissiveColor = Color3.FromHexString(vestColorHex).scale(0.45);
@@ -116,7 +114,7 @@ export class OpponentCharacter {
     visorMat.specularColor = new Color3(0.9, 0.9, 1.0);
 
     // ==========================================
-    // 1. TORSO & TACTICAL VEST (Used as Hitbox)
+    // 1. TORSO & TACTICAL VEST (Visual Only)
     // ==========================================
     this.torso = MeshBuilder.CreateBox(
       `sTorso_${this.id}`,
@@ -126,16 +124,14 @@ export class OpponentCharacter {
     this.torso.parent = this.rootNode;
     this.torso.position.y = 1.25;
     this.torso.material = vestMat;
-    this.torso.isPickable = false; // Hitbox below handles picking
+    this.torso.isPickable = false; // Hitbox handles picking
 
-    // Chest Plate (Visual only)
     const chestPlate = MeshBuilder.CreateBox(`sChestPlate_${this.id}`, { width: 0.62, height: 0.44, depth: 0.08 }, this.scene);
     chestPlate.parent = this.torso;
     chestPlate.position = new Vector3(0, 0.12, 0.18);
     chestPlate.material = accentMat;
     chestPlate.isPickable = false;
 
-    // Ammo Pouches
     for (let i = -1; i <= 1; i++) {
       const pouch = MeshBuilder.CreateBox(`sPouch_${i}_${this.id}`, { width: 0.12, height: 0.15, depth: 0.08 }, this.scene);
       pouch.parent = this.torso;
@@ -145,7 +141,7 @@ export class OpponentCharacter {
     }
 
     // ==========================================
-    // 2. HEAD & TACTICAL HELMET (Used as Hitbox)
+    // 2. HEAD & TACTICAL HELMET (Visual Only)
     // ==========================================
     this.head = MeshBuilder.CreateBox(
       `sHead_${this.id}`,
@@ -155,9 +151,8 @@ export class OpponentCharacter {
     this.head.parent = this.rootNode;
     this.head.position.y = 1.88;
     this.head.material = skinMat;
-    this.head.isPickable = false; // Hitbox below handles picking
+    this.head.isPickable = false;
 
-    // Tactical Helmet
     const helmet = MeshBuilder.CreateSphere(
       `sHelmet_${this.id}`,
       { diameterX: 0.48, diameterY: 0.42, diameterZ: 0.50, segments: 8 },
@@ -168,7 +163,6 @@ export class OpponentCharacter {
     helmet.material = helmetMat;
     helmet.isPickable = false;
 
-    // Tactical Visor
     const visor = MeshBuilder.CreateBox(
       `sVisor_${this.id}`,
       { width: 0.34, height: 0.12, depth: 0.14 },
@@ -179,7 +173,6 @@ export class OpponentCharacter {
     visor.material = visorMat;
     visor.isPickable = false;
 
-    // Ear Cups
     [-0.22, 0.22].forEach((x, idx) => {
       const earCup = MeshBuilder.CreateCylinder(`sEarCup_${idx}_${this.id}`, { height: 0.06, diameter: 0.12 }, this.scene);
       earCup.parent = this.head;
@@ -190,16 +183,18 @@ export class OpponentCharacter {
     });
 
     // ==========================================
-    // 3. DEDICATED INVISIBLE HITBOXES (PICKABLE)
+    // 3. DEDICATED INVISIBLE HITBOXES (HUGE FOR EASY HITS)
     // ==========================================
-    this.headHitbox = MeshBuilder.CreateSphere(`hitbox_head_${this.id}`, { diameter: 0.75, segments: 8 }, this.scene);
+    // Massive Head Hitbox (1.0 diameter sphere)
+    this.headHitbox = MeshBuilder.CreateSphere(`hitbox_head_${this.id}`, { diameter: 1.0, segments: 8 }, this.scene);
     this.headHitbox.parent = this.rootNode;
     this.headHitbox.position.y = 1.95;
     this.headHitbox.isVisible = false;
     this.headHitbox.isPickable = true;
     this.headHitbox.metadata = { isHitbox: true, hitPart: 'head', targetId: this.id, targetType: this.isBot ? 'bot' : 'player' };
 
-    this.bodyHitbox = MeshBuilder.CreateBox(`hitbox_torso_${this.id}`, { width: 0.85, height: 1.0, depth: 0.55 }, this.scene);
+    // Massive Torso Hitbox (1.0 x 1.2 x 1.0 box)
+    this.bodyHitbox = MeshBuilder.CreateBox(`hitbox_torso_${this.id}`, { width: 1.0, height: 1.2, depth: 1.0 }, this.scene);
     this.bodyHitbox.parent = this.rootNode;
     this.bodyHitbox.position.y = 1.25;
     this.bodyHitbox.isVisible = false;
@@ -213,7 +208,6 @@ export class OpponentCharacter {
     this.upperBodyAimPivot.parent = this.rootNode;
     this.upperBodyAimPivot.position.set(0, 1.45, 0);
 
-    // Right Arm (Trigger Hand)
     this.rightArmPivot = new TransformNode(`sRightArmPivot_${this.id}`, this.scene);
     this.rightArmPivot.parent = this.upperBodyAimPivot;
     this.rightArmPivot.position = new Vector3(0.44, 0.12, -0.04);
@@ -230,7 +224,6 @@ export class OpponentCharacter {
     rightHand.material = helmetMat;
     rightHand.isPickable = false;
 
-    // Left Arm (Foregrip / Support Hand)
     this.leftArmPivot = new TransformNode(`sLeftArmPivot_${this.id}`, this.scene);
     this.leftArmPivot.parent = this.upperBodyAimPivot;
     this.leftArmPivot.position = new Vector3(-0.44, 0.12, 0);
@@ -252,7 +245,6 @@ export class OpponentCharacter {
     // ==========================================
     this.sniperRifleMesh = new TransformNode(`sHeldSniper_${this.id}`, this.scene);
     this.sniperRifleMesh.parent = this.upperBodyAimPivot;
-    // Adjusted position to sit perfectly in the hands
     this.sniperRifleMesh.position = new Vector3(0.15, -0.12, 0.45);
 
     const gunChassis = MeshBuilder.CreateBox(`sGunChassis_${this.id}`, { width: 0.07, height: 0.12, depth: 0.72 }, this.scene);
@@ -280,7 +272,6 @@ export class OpponentCharacter {
     gunScope.material = weaponMat;
     gunScope.isPickable = false;
 
-    // Scope Glint
     this.scopeGlintMesh = MeshBuilder.CreatePlane(`sScopeGlint_${this.id}`, { size: 0.5 }, this.scene);
     this.scopeGlintMesh.parent = this.sniperRifleMesh;
     this.scopeGlintMesh.position = new Vector3(0, 0.10, 0.28);
@@ -306,7 +297,6 @@ export class OpponentCharacter {
     this.scopeGlintMesh.isVisible = false;
     this.scopeGlintMesh.isPickable = false;
 
-    // Muzzle tip
     this.muzzleTip = MeshBuilder.CreateBox(`sMuzzleTip_${this.id}`, { size: 0.01 }, this.scene);
     this.muzzleTip.parent = this.sniperRifleMesh;
     this.muzzleTip.position = new Vector3(0, 0.02, 1.02);
@@ -322,7 +312,6 @@ export class OpponentCharacter {
     this.muzzleFlash.isVisible = false;
     this.muzzleFlash.isPickable = false;
 
-    // Combat Knife
     this.combatKnifeMesh = new TransformNode(`sHeldKnife_${this.id}`, this.scene);
     this.combatKnifeMesh.parent = this.upperBodyAimPivot;
     this.combatKnifeMesh.position = new Vector3(0.24, -0.06, 0.32);
@@ -345,13 +334,10 @@ export class OpponentCharacter {
     kBlade.material = steelMat;
     kBlade.isPickable = false;
 
-    // --- PROPER TWO-HANDED RIFLE POSE ---
-    // Right hand gripping trigger
+    // PROPER TWO-HANDED RIFLE POSE
     this.rightArmPivot.rotation.x = -1.25;
     this.rightArmPivot.rotation.y = -0.25;
     this.rightArmPivot.rotation.z = 0.1;
-    
-    // Left hand supporting barrel
     this.leftArmPivot.rotation.x = -1.45;
     this.leftArmPivot.rotation.y = 0.35;
     this.leftArmPivot.rotation.z = -0.2;
@@ -363,11 +349,7 @@ export class OpponentCharacter {
     this.leftLegPivot.parent = this.rootNode;
     this.leftLegPivot.position = new Vector3(-0.18, 0.85, 0);
 
-    this.leftLeg = MeshBuilder.CreateBox(
-      `sLeftLeg_${this.id}`,
-      { width: 0.30, height: 0.80, depth: 0.30 },
-      this.scene
-    );
+    this.leftLeg = MeshBuilder.CreateBox(`sLeftLeg_${this.id}`, { width: 0.30, height: 0.80, depth: 0.30 }, this.scene);
     this.leftLeg.parent = this.leftLegPivot;
     this.leftLeg.position = new Vector3(0, -0.38, 0);
     this.leftLeg.material = pantsMat;
@@ -383,11 +365,7 @@ export class OpponentCharacter {
     this.rightLegPivot.parent = this.rootNode;
     this.rightLegPivot.position = new Vector3(0.18, 0.85, 0);
 
-    this.rightLeg = MeshBuilder.CreateBox(
-      `sRightLeg_${this.id}`,
-      { width: 0.30, height: 0.80, depth: 0.30 },
-      this.scene
-    );
+    this.rightLeg = MeshBuilder.CreateBox(`sRightLeg_${this.id}`, { width: 0.30, height: 0.80, depth: 0.30 }, this.scene);
     this.rightLeg.parent = this.rightLegPivot;
     this.rightLeg.position = new Vector3(0, -0.38, 0);
     this.rightLeg.material = pantsMat;
@@ -654,7 +632,6 @@ export class OpponentCharacter {
     const targetCrouchFactor = this.isCrouching ? 1.0 : 0.0;
     this.crouchFactor = this.crouchFactor !== undefined ? this.crouchFactor + (targetCrouchFactor - this.crouchFactor) * Math.min(1.0, 14 * dt) : targetCrouchFactor;
 
-    // Update visual hitboxes positions on crouch
     if (this.head) this.head.position.y = 1.88 - this.crouchFactor * 0.73;
     if (this.headHitbox) this.headHitbox.position.y = 1.95 - this.crouchFactor * 0.75;
     if (this.torso) this.torso.position.y = 1.25 - this.crouchFactor * 0.50;
@@ -761,23 +738,18 @@ export class OpponentCharacter {
     const isKnife = this.activeWeapon === 'knife';
 
     if (isMoving) {
-      // INCREASE ANIMATION RATE BASED ON SPEED (Fast Run)
       const animRate = Math.min(22.0, Math.max(10.0, moveSpeed * 1.8));
       this.walkAnimTimer += dt * animRate;
-      
-      // WIDER LEG SWING WHEN RUNNING FAST
       const legSwing = (moveSpeed > 7.0) ? 1.1 : 0.72;
       const legAngle = Math.sin(this.walkAnimTimer) * legSwing;
       
       this.leftLegPivot.rotation.x = legAngle;
       this.rightLegPivot.rotation.x = -legAngle;
       
-      // FORWARD TORSO LEAN WHEN RUNNING
       const targetLean = (moveSpeed > 7.0) ? 0.25 : 0.12;
       this.torso.rotation.x = targetLean;
       this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + Math.abs(Math.sin(this.walkAnimTimer)) * 0.08;
 
-      // Keep arms holding the gun tightly, with a slight sway
       const armSway = Math.sin(this.walkAnimTimer) * 0.05;
       if (isKnife) {
         this.rightArmPivot.rotation.x = -0.75 + armSway + meleeArmRotX;

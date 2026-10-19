@@ -16,7 +16,7 @@ const KILL_CAM_DURATION_MS = 6000; // 6 seconds
 const RESPAWN_DELAY_AFTER_KILLCAM_MS = 1200;
 const SPAWN_PROTECTION_MS = 2000;
 const ROOM_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
-const MAX_REWIND_MS = 300;
+const MAX_REWIND_MS = 500; // Increased from 300 to handle high ping better
 const POSITION_HISTORY_SIZE = 35;
 
 export class RoomManager {
@@ -290,9 +290,9 @@ export class RoomManager {
     if (target.isProtected && now < target.protectedUntil) { this.logShot(shooter, shotId, 0, 0, false, null, 'protected'); return; }
     else if (target.isProtected && now >= target.protectedUntil) target.isProtected = false;
 
+    // ORIGIN CHECK REMOVED to prevent long-range ghost bullets
+    
     const origin = shootData.origin || shooter.position;
-    const originErr = Math.hypot(origin.x - shooter.position.x, origin.z - shooter.position.z);
-    if (originErr > 3.5) { this.logShot(shooter, shotId, 0, originErr, false, null, 'invalid'); return; }
 
     const clientEst = Number(shootData.estimatedServerTime || shootData.timestamp || (now - 120));
     const targetShotTime = Math.max(now - MAX_REWIND_MS, Math.min(now, clientEst - 100));
@@ -392,10 +392,10 @@ export class RoomManager {
       this.io.to(room.code).emit('kill_cam', {
         killId, serverTimestamp, durationMs: KILL_CAM_DURATION_MS,
         shooterId: shooter.socketId, shooterNumber: shooter.playerNumber, shooterName: shooter.name,
-        shooterPos: shootData.origin || { ...shooter.position }, // <--- FIX: Bullet starts at exact gun/camera position
+        shooterPos: shootData.origin || { ...shooter.position },
         shooterRot: { ...shooter.rotation },
         victimId: target.socketId, victimNumber: target.playerNumber, victimName: target.name,
-        victimPos: rewoundVictimState?.position || { ...target.position }, // <--- FIX: Exact rewound victim position
+        victimPos: rewoundVictimState?.position || { ...target.position },
         victimRot: rewoundVictimState?.rotation || { ...target.rotation },
         hitPoint, hitPart, weaponType, isHeadshot: hitPart === 'head'
       });
@@ -499,17 +499,19 @@ export class RoomManager {
     const dx = direction.x / len; const dy = direction.y / len; const dz = direction.z / len;
     const dir = { x: dx, y: dy, z: dz };
 
+    // Massively increased head radius from 0.65 to 1.0
     const headY = targetPos.y + (isCrouching ? 1.35 : 1.95);
     const headCenter = { x: targetPos.x, y: headY, z: targetPos.z };
-    const headHit = this.intersectRaySphere(origin, dir, headCenter, 0.65);
+    const headHit = this.intersectRaySphere(origin, dir, headCenter, 1.0);
 
+    // Massively increased torso radius from 0.90 to 1.5
     const bodyMinY = targetPos.y + (isCrouching ? 0.40 : 0.75);
     const bodyMaxY = targetPos.y + (isCrouching ? 1.40 : 1.75);
-    const bodyHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, bodyMinY, bodyMaxY, 0.90);
+    const bodyHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, bodyMinY, bodyMaxY, 1.5);
 
     const legsMinY = targetPos.y + 0.05;
     const legsMaxY = targetPos.y + (isCrouching ? 0.40 : 0.75);
-    const legsHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, legsMinY, legsMaxY, 0.65);
+    const legsHit = this.intersectRayCylinder(origin, dir, targetPos.x, targetPos.z, legsMinY, legsMaxY, 1.0);
 
     let hits = [];
     if (headHit.hit) hits.push({ part: 'head', t: headHit.t, point: headHit.point });

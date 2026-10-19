@@ -320,7 +320,9 @@ export class WeaponSystem {
       if (mesh.name === 'playerCollider' || mesh.metadata?.isLocalPlayer) return false;
       if (mesh.name?.startsWith('tracer_') || mesh.metadata?.isTrigger) return false;
       if (mesh.name?.startsWith('nameTag') || mesh.name?.startsWith('soldierShield') || mesh.name?.startsWith('sScopeGlint') || mesh.name?.startsWith('sMuzzle')) return false;
-      return !!(mesh.metadata?.isHitbox || mesh.checkCollisions);
+      
+      // ONLY hit the massive invisible hitboxes. Walls do not block the raycast.
+      return !!(mesh.metadata?.isHitbox); 
     });
 
     const shotId = `shot_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
