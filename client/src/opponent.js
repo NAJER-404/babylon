@@ -1,5 +1,4 @@
-// High-Fidelity Humanoid Soldier Model: Tactical Armor, Team Colors, Scope Glint,
-// Floating Billboard Nametag with Mini HP Bar & Procedural Animations
+// High-Fidelity Humanoid Soldier Model
 import {
   MeshBuilder,
   StandardMaterial,
@@ -33,12 +32,10 @@ export class OpponentCharacter {
     this.isSprinting = false;
     this.onGround = true;
 
-    // Telemetry & animation derivation (Section E & J)
     this.animState = 'idle';
     this.lastInterpolatedSpeed = 0;
     this.lastReceivedPos = new Vector3(0, 0, 0);
 
-    // Animation timers
     this.walkAnimTimer = 0;
     this.idleTimer = 0;
     this.recoilTimer = 0;
@@ -46,18 +43,15 @@ export class OpponentCharacter {
     this.meleeSwingTimer = 0;
     this.flinchTimer = 0;
 
-    // Network interpolation buffer
     this.positionBuffer = [];
     this.targetPosition = new Vector3(0, 0, 0);
     this.targetRotationY = 0;
     this.serverClockOffset = 0;
     this.crouchFactor = 0;
 
-    // Hitbox debug wireframe state
     this.debugWireframeMat = null;
     this.hitboxesWireframeVisible = false;
 
-    // Ragdoll state
     this.isRagdoll = false;
     this.ragdollTime = 0;
     this.ragdollParts = [];
@@ -69,7 +63,6 @@ export class OpponentCharacter {
   createHumanoidCharacter() {
     this.rootNode = new TransformNode(`humanoidSoldier_${this.id}`, this.scene);
 
-    // Team vest colors
     let vestColorHex = CONFIG.COLORS.TEAM_BLUE_VEST;
     let accentColorHex = CONFIG.COLORS.TEAM_BLUE_ACCENT;
 
@@ -81,12 +74,11 @@ export class OpponentCharacter {
       accentColorHex = CONFIG.COLORS.TEAM_RED_ACCENT;
     }
 
-    // --- MATERIALS (Section I: Emissive team glow for distant visibility) ---
     const vestMat = new StandardMaterial(`soldierVest_${this.id}`, this.scene);
     vestMat.diffuseColor = Color3.FromHexString(vestColorHex);
     vestMat.emissiveColor = Color3.FromHexString(vestColorHex).scale(0.45);
     vestMat.specularColor = new Color3(0.2, 0.2, 0.2);
-    this.vestMat = vestMat; // Save for debug toggle
+    this.vestMat = vestMat;
 
     const accentMat = new StandardMaterial(`soldierAcc_${this.id}`, this.scene);
     accentMat.diffuseColor = Color3.FromHexString(accentColorHex);
@@ -99,11 +91,10 @@ export class OpponentCharacter {
     const skinMat = new StandardMaterial(`soldierSkin_${this.id}`, this.scene);
     skinMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_SKIN);
     skinMat.specularColor = new Color3(0.1, 0.1, 0.1);
-    this.skinMat = skinMat; // Save for debug toggle
+    this.skinMat = skinMat;
 
     const pantsMat = new StandardMaterial(`soldierPants_${this.id}`, this.scene);
     pantsMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_PANTS);
-    pantsMat.specularColor = new Color3(0.1, 0.1, 0.1);
 
     const bootsMat = new StandardMaterial(`soldierBoots_${this.id}`, this.scene);
     bootsMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_BOOTS);
@@ -114,119 +105,108 @@ export class OpponentCharacter {
 
     const steelMat = new StandardMaterial(`soldierSteelMat_${this.id}`, this.scene);
     steelMat.diffuseColor = new Color3(0.75, 0.78, 0.82);
-    steelMat.specularColor = new Color3(0.9, 0.9, 1.0);
 
     const visorMat = new StandardMaterial(`soldierVisor_${this.id}`, this.scene);
     visorMat.diffuseColor = new Color3(0.05, 0.15, 0.25);
     visorMat.emissiveColor = new Color3(0.0, 0.3, 0.45);
-    visorMat.specularColor = new Color3(0.9, 0.9, 1.0);
 
     // ==========================================
-    // 1. TORSO (Used as Torso Hitbox)
+    // 1. VISUAL TORSO & HEAD (NOT PICKABLE)
     // ==========================================
-    this.torso = MeshBuilder.CreateBox(
-      `sTorso_${this.id}`,
-      { width: 0.68, height: 0.78, depth: 0.38 },
-      this.scene
-    );
+    this.torso = MeshBuilder.CreateBox(`sTorso_${this.id}`, { width: 0.68, height: 0.78, depth: 0.38 }, this.scene);
     this.torso.parent = this.rootNode;
     this.torso.position.y = 1.25;
     this.torso.material = vestMat;
-    
-    // USE VISUAL TORSO AS HITBOX
-    this.torso.isPickable = true; 
-    this.torso.metadata = {
-      isHitbox: true,
-      hitPart: 'torso',
-      targetId: this.id,
-      targetType: this.isBot ? 'bot' : 'player'
-    };
+    this.torso.isPickable = false; // Ray passes through
 
-    // NOTE: The chest plate and pouches have been completely removed to fix the "rectangle" issue.
-
-    // ==========================================
-    // 2. HEAD (Used as Head Hitbox)
-    // ==========================================
-    // Made the head slightly larger (0.50) so it's much easier to hit.
-    this.head = MeshBuilder.CreateBox(
-      `sHead_${this.id}`,
-      { width: 0.50, height: 0.50, depth: 0.50 },
-      this.scene
-    );
+    this.head = MeshBuilder.CreateBox(`sHead_${this.id}`, { width: 0.40, height: 0.42, depth: 0.40 }, this.scene);
     this.head.parent = this.rootNode;
     this.head.position.y = 1.88;
     this.head.material = skinMat;
-    
-    // USE VISUAL HEAD AS HITBOX
-    this.head.isPickable = true;
-    this.head.metadata = {
-      isHitbox: true,
-      hitPart: 'head',
-      targetId: this.id,
-      targetType: this.isBot ? 'bot' : 'player'
-    };
+    this.head.isPickable = false; // Ray passes through
 
-    // Tactical Helmet (isPickable = false so bullets pass through it to hit the head)
-    const helmet = MeshBuilder.CreateSphere(
-      `sHelmet_${this.id}`,
-      { diameterX: 0.52, diameterY: 0.48, diameterZ: 0.54, segments: 8 },
-      this.scene
-    );
+    // Tactical Helmet
+    const helmet = MeshBuilder.CreateSphere(`sHelmet_${this.id}`, { diameterX: 0.52, diameterY: 0.48, diameterZ: 0.54, segments: 8 }, this.scene);
     helmet.parent = this.head;
     helmet.position.y = 0.12;
     helmet.material = helmetMat;
     helmet.isPickable = false;
 
-    // Tactical Visor
-    const visor = MeshBuilder.CreateBox(
-      `sVisor_${this.id}`,
-      { width: 0.34, height: 0.12, depth: 0.14 },
-      this.scene
-    );
+    // Visor
+    const visor = MeshBuilder.CreateBox(`sVisor_${this.id}`, { width: 0.34, height: 0.12, depth: 0.14 }, this.scene);
     visor.parent = this.head;
     visor.position = new Vector3(0, 0.04, 0.20);
     visor.material = visorMat;
     visor.isPickable = false;
 
     // ==========================================
-    // 3. UPPER BODY AIM PIVOT & ARMS
+    // 2. DEDICATED INVISIBLE HITBOXES (PICKABLE)
+    // ==========================================
+    // Head Hitbox (Sphere larger than helmet)
+    this.headHitbox = MeshBuilder.CreateSphere(`hitbox_head_${this.id}`, { diameter: 0.75, segments: 8 }, this.scene);
+    this.headHitbox.parent = this.rootNode;
+    this.headHitbox.position.y = 1.95;
+    this.headHitbox.isVisible = false;
+    this.headHitbox.isPickable = true;
+    this.headHitbox.metadata = { isHitbox: true, hitPart: 'head', targetId: this.id, targetType: this.isBot ? 'bot' : 'player' };
+
+    // Torso Hitbox (Box larger than chest)
+    this.bodyHitbox = MeshBuilder.CreateBox(`hitbox_torso_${this.id}`, { width: 0.85, height: 1.0, depth: 0.55 }, this.scene);
+    this.bodyHitbox.parent = this.rootNode;
+    this.bodyHitbox.position.y = 1.25;
+    this.bodyHitbox.isVisible = false;
+    this.bodyHitbox.isPickable = true;
+    this.bodyHitbox.metadata = { isHitbox: true, hitPart: 'torso', targetId: this.id, targetType: this.isBot ? 'bot' : 'player' };
+
+    // ==========================================
+    // 3. ARMS & LEGS (NOT PICKABLE)
     // ==========================================
     this.upperBodyAimPivot = new TransformNode(`sAimPivot_${this.id}`, this.scene);
     this.upperBodyAimPivot.parent = this.rootNode;
     this.upperBodyAimPivot.position.set(0, 1.45, 0);
 
-    // Right Arm
     this.rightArmPivot = new TransformNode(`sRightArmPivot_${this.id}`, this.scene);
     this.rightArmPivot.parent = this.upperBodyAimPivot;
     this.rightArmPivot.position = new Vector3(0.44, 0.12, -0.04);
 
-    this.rightArm = MeshBuilder.CreateBox(
-      `sRightArm_${this.id}`,
-      { width: 0.24, height: 0.72, depth: 0.24 },
-      this.scene
-    );
+    this.rightArm = MeshBuilder.CreateBox(`sRightArm_${this.id}`, { width: 0.24, height: 0.72, depth: 0.24 }, this.scene);
     this.rightArm.parent = this.rightArmPivot;
     this.rightArm.position = new Vector3(0, -0.34, 0);
     this.rightArm.material = vestMat;
-    this.rightArm.isPickable = false; // Ignored by raycast
+    this.rightArm.isPickable = false;
 
-    // Left Arm
     this.leftArmPivot = new TransformNode(`sLeftArmPivot_${this.id}`, this.scene);
     this.leftArmPivot.parent = this.upperBodyAimPivot;
     this.leftArmPivot.position = new Vector3(-0.44, 0.12, 0);
 
-    this.leftArm = MeshBuilder.CreateBox(
-      `sLeftArm_${this.id}`,
-      { width: 0.24, height: 0.72, depth: 0.24 },
-      this.scene
-    );
+    this.leftArm = MeshBuilder.CreateBox(`sLeftArm_${this.id}`, { width: 0.24, height: 0.72, depth: 0.24 }, this.scene);
     this.leftArm.parent = this.leftArmPivot;
     this.leftArm.position = new Vector3(0, -0.34, 0);
     this.leftArm.material = vestMat;
-    this.leftArm.isPickable = false; // Ignored by raycast
+    this.leftArm.isPickable = false;
+
+    this.leftLegPivot = new TransformNode(`sLeftLegPivot_${this.id}`, this.scene);
+    this.leftLegPivot.parent = this.rootNode;
+    this.leftLegPivot.position = new Vector3(-0.18, 0.85, 0);
+
+    this.leftLeg = MeshBuilder.CreateBox(`sLeftLeg_${this.id}`, { width: 0.30, height: 0.80, depth: 0.30 }, this.scene);
+    this.leftLeg.parent = this.leftLegPivot;
+    this.leftLeg.position = new Vector3(0, -0.38, 0);
+    this.leftLeg.material = pantsMat;
+    this.leftLeg.isPickable = false;
+
+    this.rightLegPivot = new TransformNode(`sRightLegPivot_${this.id}`, this.scene);
+    this.rightLegPivot.parent = this.rootNode;
+    this.rightLegPivot.position = new Vector3(0.18, 0.85, 0);
+
+    this.rightLeg = MeshBuilder.CreateBox(`sRightLeg_${this.id}`, { width: 0.30, height: 0.80, depth: 0.30 }, this.scene);
+    this.rightLeg.parent = this.rightLegPivot;
+    this.rightLeg.position = new Vector3(0, -0.38, 0);
+    this.rightLeg.material = pantsMat;
+    this.rightLeg.isPickable = false;
 
     // ==========================================
-    // 4. WEAPONS: SNIPER RIFLE & COMBAT KNIFE
+    // 4. WEAPONS
     // ==========================================
     this.sniperRifleMesh = new TransformNode(`sHeldSniper_${this.id}`, this.scene);
     this.sniperRifleMesh.parent = this.upperBodyAimPivot;
@@ -244,7 +224,6 @@ export class OpponentCharacter {
     gunBarrel.material = weaponMat;
     gunBarrel.isPickable = false;
 
-    // SCOPE GLINT
     this.scopeGlintMesh = MeshBuilder.CreatePlane(`sScopeGlint_${this.id}`, { size: 0.5 }, this.scene);
     this.scopeGlintMesh.parent = this.sniperRifleMesh;
     this.scopeGlintMesh.position = new Vector3(0, 0.10, 0.28);
@@ -285,7 +264,6 @@ export class OpponentCharacter {
     this.muzzleFlash.isVisible = false;
     this.muzzleFlash.isPickable = false;
 
-    // Knife
     this.combatKnifeMesh = new TransformNode(`sHeldKnife_${this.id}`, this.scene);
     this.combatKnifeMesh.parent = this.upperBodyAimPivot;
     this.combatKnifeMesh.position = new Vector3(0.24, -0.06, 0.32);
@@ -302,58 +280,11 @@ export class OpponentCharacter {
     kBlade.material = steelMat;
     kBlade.isPickable = false;
 
-    // Default posture
     this.rightArmPivot.rotation.x = -1.15;
     this.rightArmPivot.rotation.y = -0.22;
     this.leftArmPivot.rotation.x = -1.05;
     this.leftArmPivot.rotation.y = 0.52;
 
-    // ==========================================
-    // 5. LOWER BODY & TACTICAL BOOTS
-    // ==========================================
-    this.leftLegPivot = new TransformNode(`sLeftLegPivot_${this.id}`, this.scene);
-    this.leftLegPivot.parent = this.rootNode;
-    this.leftLegPivot.position = new Vector3(-0.18, 0.85, 0);
-
-    this.leftLeg = MeshBuilder.CreateBox(
-      `sLeftLeg_${this.id}`,
-      { width: 0.30, height: 0.80, depth: 0.30 },
-      this.scene
-    );
-    this.leftLeg.parent = this.leftLegPivot;
-    this.leftLeg.position = new Vector3(0, -0.38, 0);
-    this.leftLeg.material = pantsMat;
-    this.leftLeg.isPickable = false;
-
-    const leftBoot = MeshBuilder.CreateBox(`sLeftBoot_${this.id}`, { width: 0.32, height: 0.22, depth: 0.38 }, this.scene);
-    leftBoot.parent = this.leftLeg;
-    leftBoot.position = new Vector3(0, -0.34, 0.04);
-    leftBoot.material = bootsMat;
-    leftBoot.isPickable = false;
-
-    this.rightLegPivot = new TransformNode(`sRightLegPivot_${this.id}`, this.scene);
-    this.rightLegPivot.parent = this.rootNode;
-    this.rightLegPivot.position = new Vector3(0.18, 0.85, 0);
-
-    this.rightLeg = MeshBuilder.CreateBox(
-      `sRightLeg_${this.id}`,
-      { width: 0.30, height: 0.80, depth: 0.30 },
-      this.scene
-    );
-    this.rightLeg.parent = this.rightLegPivot;
-    this.rightLeg.position = new Vector3(0, -0.38, 0);
-    this.rightLeg.material = pantsMat;
-    this.rightLeg.isPickable = false;
-
-    const rightBoot = MeshBuilder.CreateBox(`sRightBoot_${this.id}`, { width: 0.32, height: 0.22, depth: 0.38 }, this.scene);
-    rightBoot.parent = this.rightLeg;
-    rightBoot.position = new Vector3(0, -0.34, 0.04);
-    rightBoot.material = bootsMat;
-    rightBoot.isPickable = false;
-
-    // ==========================================
-    // 6. SPAWN PROTECTION BUBBLE
-    // ==========================================
     this.shieldSphere = MeshBuilder.CreateSphere(`soldierShield_${this.id}`, { diameter: 2.6, segments: 16 }, this.scene);
     this.shieldSphere.parent = this.rootNode;
     this.shieldSphere.position.y = 1.2;
@@ -387,17 +318,12 @@ export class OpponentCharacter {
 
   updateNameTag() {
     if (!this.nameTagTexture) return;
-
     const ctx = this.nameTagTexture.getContext();
     ctx.clearRect(0, 0, 256, 64);
-
     ctx.fillStyle = 'rgba(10, 15, 26, 0.75)';
     ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(4, 4, 248, 56, 8);
-    } else {
-      ctx.rect(4, 4, 248, 56);
-    }
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(4, 4, 248, 56, 8);
+    else ctx.rect(4, 4, 248, 56);
     ctx.fill();
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
     ctx.lineWidth = 2;
@@ -410,25 +336,16 @@ export class OpponentCharacter {
 
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
     ctx.fillRect(28, 38, 200, 12);
-
     const pct = Math.max(0, Math.min(1.0, this.health / 100));
     let hpColor = '#10b981';
-    if (pct < 0.35) {
-      hpColor = '#ef4444';
-    } else if (pct < 0.65) {
-      hpColor = '#f59e0b';
-    }
-
+    if (pct < 0.35) hpColor = '#ef4444';
+    else if (pct < 0.65) hpColor = '#f59e0b';
     ctx.fillStyle = hpColor;
     ctx.fillRect(30, 40, 196 * pct, 8);
-
     this.nameTagTexture.update();
   }
 
-  setName(newName) {
-    this.name = newName;
-    this.updateNameTag();
-  }
+  setName(newName) { this.name = newName; this.updateNameTag(); }
 
   setActiveWeapon(weaponId) {
     this.activeWeapon = weaponId === 'knife' ? 'knife' : 'sniper';
@@ -439,9 +356,7 @@ export class OpponentCharacter {
 
   setScopedState(scoped) {
     this.isScoped = !!scoped;
-    if (this.scopeGlintMesh) {
-      this.scopeGlintMesh.isVisible = this.isScoped && this.activeWeapon === 'sniper' && this.isAlive;
-    }
+    if (this.scopeGlintMesh) this.scopeGlintMesh.isVisible = this.isScoped && this.activeWeapon === 'sniper' && this.isAlive;
   }
 
   triggerShotVisual() {
@@ -450,14 +365,10 @@ export class OpponentCharacter {
     if (this.muzzleFlash) this.muzzleFlash.isVisible = true;
   }
 
-  triggerMeleeVisual() {
-    this.meleeSwingTimer = 0.25;
-  }
+  triggerMeleeVisual() { this.meleeSwingTimer = 0.25; }
 
   getMuzzleWorldPosition() {
-    if (this.muzzleTip) {
-      return this.muzzleTip.getAbsolutePosition();
-    }
+    if (this.muzzleTip) return this.muzzleTip.getAbsolutePosition();
     return this.rootNode.position.add(new Vector3(0, 1.5, 0.8));
   }
 
@@ -467,7 +378,6 @@ export class OpponentCharacter {
     const dx = targetWorldPos.x - this.rootNode.position.x;
     const dz = targetWorldPos.z - this.rootNode.position.z;
     const distHoriz = Math.hypot(dx, dz);
-
     if (distHoriz > 0.1) {
       this.aimPitch = Math.atan2(-dy, distHoriz);
       this.aimPitch = Math.max(-0.85, Math.min(0.85, this.aimPitch));
@@ -478,7 +388,6 @@ export class OpponentCharacter {
     this.isRagdoll = true;
     this.ragdollTime = 0;
     this.ragdollParts = [];
-
     if (this.nameTagPlane) this.nameTagPlane.isVisible = false;
     if (this.scopeGlintMesh) this.scopeGlintMesh.isVisible = false;
 
@@ -495,7 +404,6 @@ export class OpponentCharacter {
       if (!p.mesh) return;
       const worldPos = p.mesh.getAbsolutePosition().clone();
       const localPos = worldPos.subtract(this.rootNode.position);
-
       p.mesh.parent = this.rootNode;
       p.mesh.position.copyFrom(localPos);
 
@@ -510,14 +418,8 @@ export class OpponentCharacter {
       }
 
       this.ragdollParts.push({
-        mesh: p.mesh,
-        pos: localPos,
-        vx,
-        vy,
-        vz,
-        rotVx: (Math.random() - 0.5) * 9.0,
-        rotVy: (Math.random() - 0.5) * 9.0,
-        rotVz: (Math.random() - 0.5) * 9.0,
+        mesh: p.mesh, pos: localPos, vx, vy, vz,
+        rotVx: (Math.random() - 0.5) * 9.0, rotVy: (Math.random() - 0.5) * 9.0, rotVz: (Math.random() - 0.5) * 9.0,
         minY: p.minY
       });
     });
@@ -527,125 +429,53 @@ export class OpponentCharacter {
     this.isRagdoll = false;
     this.ragdollTime = 0;
     this.ragdollParts = [];
-
     if (this.nameTagPlane) this.nameTagPlane.isVisible = true;
 
-    if (this.torso) {
-      this.torso.parent = this.rootNode;
-      this.torso.position.set(0, 1.25, 0);
-      this.torso.rotation.set(0, 0, 0);
-      this.torso.visibility = 1.0;
-    }
-    if (this.head) {
-      this.head.parent = this.rootNode;
-      this.head.position.set(0, 1.88, 0);
-      this.head.rotation.set(0, 0, 0);
-      this.head.visibility = 1.0;
-    }
-    if (this.leftArm) {
-      this.leftArm.parent = this.leftArmPivot;
-      this.leftArm.position.set(0, -0.34, 0);
-      this.leftArm.rotation.set(0, 0, 0);
-      this.leftArm.visibility = 1.0;
-    }
-    if (this.rightArm) {
-      this.rightArm.parent = this.rightArmPivot;
-      this.rightArm.position.set(0, -0.34, 0);
-      this.rightArm.rotation.set(0, 0, 0);
-      this.rightArm.visibility = 1.0;
-    }
-    if (this.leftLeg) {
-      this.leftLeg.parent = this.leftLegPivot;
-      this.leftLeg.position.set(0, -0.38, 0);
-      this.leftLeg.rotation.set(0, 0, 0);
-      this.leftLeg.visibility = 1.0;
-    }
-    if (this.rightLeg) {
-      this.rightLeg.parent = this.rightLegPivot;
-      this.rightLeg.position.set(0, -0.38, 0);
-      this.rightLeg.rotation.set(0, 0, 0);
-      this.rightLeg.visibility = 1.0;
-    }
+    if (this.torso) { this.torso.parent = this.rootNode; this.torso.position.set(0, 1.25, 0); this.torso.rotation.set(0, 0, 0); this.torso.visibility = 1.0; }
+    if (this.head) { this.head.parent = this.rootNode; this.head.position.set(0, 1.88, 0); this.head.rotation.set(0, 0, 0); this.head.visibility = 1.0; }
+    if (this.leftArm) { this.leftArm.parent = this.leftArmPivot; this.leftArm.position.set(0, -0.34, 0); this.leftArm.rotation.set(0, 0, 0); this.leftArm.visibility = 1.0; }
+    if (this.rightArm) { this.rightArm.parent = this.rightArmPivot; this.rightArm.position.set(0, -0.34, 0); this.rightArm.rotation.set(0, 0, 0); this.rightArm.visibility = 1.0; }
+    if (this.leftLeg) { this.leftLeg.parent = this.leftLegPivot; this.leftLeg.position.set(0, -0.38, 0); this.leftLeg.rotation.set(0, 0, 0); this.leftLeg.visibility = 1.0; }
+    if (this.rightLeg) { this.rightLeg.parent = this.rightLegPivot; this.rightLeg.position.set(0, -0.38, 0); this.rightLeg.rotation.set(0, 0, 0); this.rightLeg.visibility = 1.0; }
     this.updateNameTag();
   }
 
   setHitboxesWireframe(visible) {
     this.hitboxesWireframeVisible = !!visible;
-    
-    const hitboxes = [this.head, this.torso]; 
-
+    const hitboxes = [this.headHitbox, this.bodyHitbox]; 
     if (visible && !this.debugWireframeMat) {
       this.debugWireframeMat = new StandardMaterial(`hitboxWireMat_${this.id}`, this.scene);
       this.debugWireframeMat.wireframe = true;
       this.debugWireframeMat.emissiveColor = new Color3(0, 1, 0.4);
       this.debugWireframeMat.disableLighting = true;
     }
-
     hitboxes.forEach(m => {
       if (!m) return;
-      if (visible) {
-        m.material = this.debugWireframeMat;
-      } else {
-        m.material = (m === this.head) ? this.skinMat : this.vestMat;
-      }
+      if (visible) { m.material = this.debugWireframeMat; m.isVisible = true; }
+      else { m.material = null; m.isVisible = false; }
     });
   }
 
-  setServerClockOffset(offsetMs) {
-    this.serverClockOffset = offsetMs || 0;
-  }
+  setServerClockOffset(offsetMs) { this.serverClockOffset = offsetMs || 0; }
 
   pushNetworkUpdate(update) {
     if (!update) return;
-
-    let posX = this.rootNode.position.x;
-    if (update.x !== undefined) posX = Number(update.x);
-    else if (update.p && update.p.length >= 3) posX = Number(update.p[0]);
-    else if (update.position?.x !== undefined) posX = Number(update.position.x);
-
-    let posY = this.rootNode.position.y;
-    if (update.y !== undefined) posY = Number(update.y);
-    else if (update.p && update.p.length >= 3) posY = Number(update.p[1]);
-    else if (update.position?.y !== undefined) posY = Number(update.position.y);
-
-    let posZ = this.rootNode.position.z;
-    if (update.z !== undefined) posZ = Number(update.z);
-    else if (update.p && update.p.length >= 3) posZ = Number(update.p[2]);
-    else if (update.position?.z !== undefined) posZ = Number(update.position.z);
-
-    let rotY = this.rootNode.rotation.y;
-    if (update.yaw !== undefined) rotY = Number(update.yaw);
-    else if (update.ry !== undefined) rotY = Number(update.ry);
-    else if (update.r && update.r.length >= 2) rotY = Number(update.r[1]);
-    else if (update.rotation?.y !== undefined) rotY = Number(update.rotation.y);
-
-    let pitch = this.aimPitch;
-    if (update.pitch !== undefined) pitch = Number(update.pitch);
-    else if (update.rx !== undefined) pitch = Number(update.rx);
-    else if (update.r && update.r.length >= 2) pitch = Number(update.r[0]);
-    else if (update.rotation?.x !== undefined) pitch = Number(update.rotation.x);
-
-    let vx = 0, vy = 0, vz = 0;
-    if (update.vx !== undefined) vx = Number(update.vx);
-    else if (update.v && update.v.length >= 3) vx = Number(update.v[0]);
-    else if (update.velocity?.x !== undefined) vx = Number(update.velocity.x);
-
-    if (update.vy !== undefined) vy = Number(update.vy);
-    else if (update.v && update.v.length >= 3) vy = Number(update.v[1]);
-    else if (update.velocity?.y !== undefined) vy = Number(update.velocity.y);
-
-    if (update.vz !== undefined) vz = Number(update.vz);
-    else if (update.v && update.v.length >= 3) vz = Number(update.v[2]);
-    else if (update.velocity?.z !== undefined) vz = Number(update.velocity.z);
-
-    const isCrouch = update.crouch !== undefined ? !!update.crouch : (update.c !== undefined ? !!update.c : (update.isCrouching !== undefined ? !!update.isCrouching : false));
-    const isSprinting = update.sprint !== undefined ? !!update.sprint : (update.sp !== undefined ? !!update.sp : (update.isSprinting !== undefined ? !!update.isSprinting : false));
-    const isScope = update.scoped !== undefined ? !!update.scoped : (update.s !== undefined ? !!update.s : (update.isScoped !== undefined ? !!update.isScoped : false));
+    let posX = update.x !== undefined ? Number(update.x) : (update.position?.x ?? this.rootNode.position.x);
+    let posY = update.y !== undefined ? Number(update.y) : (update.position?.y ?? this.rootNode.position.y);
+    let posZ = update.z !== undefined ? Number(update.z) : (update.position?.z ?? this.rootNode.position.z);
+    let rotY = update.yaw !== undefined ? Number(update.yaw) : (update.ry !== undefined ? Number(update.ry) : (update.rotation?.y ?? this.rootNode.rotation.y));
+    let pitch = update.pitch !== undefined ? Number(update.pitch) : (update.rx !== undefined ? Number(update.rx) : (update.rotation?.x ?? this.aimPitch));
+    let vx = update.vx !== undefined ? Number(update.vx) : (update.velocity?.x || 0);
+    let vy = update.vy !== undefined ? Number(update.vy) : (update.velocity?.y || 0);
+    let vz = update.vz !== undefined ? Number(update.vz) : (update.velocity?.z || 0);
+    const isCrouch = !!(update.crouch || update.c || update.isCrouching);
+    const isSprinting = !!(update.sprint || update.sp || update.isSprinting);
+    const isScope = !!(update.scoped || update.s || update.isScoped);
     const onGround = update.onGround !== undefined ? !!update.onGround : true;
     const swing = !!update.swing;
     const activeWep = update.weapon || ((update.w === 1 || update.w === 'knife') ? 'knife' : 'sniper') || update.activeWeapon;
-    const isAlive = update.alive !== undefined ? (update.alive === 1 || update.alive === true) : (update.isAlive !== undefined ? !!update.isAlive : (update.a !== undefined ? !!update.a : true));
-    const isProtected = update.pr !== undefined ? !!update.pr : (update.isProtected !== undefined ? !!update.isProtected : false);
+    const isAlive = update.alive !== undefined ? (update.alive === 1 || update.alive === true) : (update.isAlive !== undefined ? !!update.isAlive : true);
+    const isProtected = !!(update.pr || update.isProtected);
     const health = update.hp !== undefined ? Number(update.hp) : (update.health !== undefined ? Number(update.health) : this.health);
 
     this.lastReceivedPos.set(posX, posY, posZ);
@@ -654,49 +484,15 @@ export class OpponentCharacter {
     this.onGround = onGround;
     const timestamp = update.t || update.timestamp || Date.now();
 
-    this.positionBuffer.push({
-      x: posX,
-      y: posY,
-      z: posZ,
-      vx,
-      vy,
-      vz,
-      yaw: rotY,
-      rotY,
-      pitch,
-      sprint: isSprinting,
-      crouch: isCrouch,
-      scoped: isScope,
-      onGround,
-      swing,
-      timestamp
-    });
-
-    if (this.positionBuffer.length > 30) {
-      this.positionBuffer.shift();
-    }
-
-    if (swing) {
-      this.triggerMeleeVisual();
-    }
-
-    if (health !== this.health) {
-      this.health = health;
-      this.updateNameTag();
-    }
-    if (isAlive !== this.isAlive) {
-      this.setVisible(isAlive);
-    }
+    this.positionBuffer.push({ x: posX, y: posY, z: posZ, vx, vy, vz, yaw: rotY, rotY, pitch, sprint: isSprinting, crouch: isCrouch, scoped: isScope, onGround, swing, timestamp });
+    if (this.positionBuffer.length > 30) this.positionBuffer.shift();
+    if (swing) this.triggerMeleeVisual();
+    if (health !== this.health) { this.health = health; this.updateNameTag(); }
+    if (isAlive !== this.isAlive) this.setVisible(isAlive);
     this.setProtected(isProtected);
-    if (activeWep) {
-      this.setActiveWeapon(activeWep);
-    }
-    if (isScope !== undefined) {
-      this.setScopedState(isScope);
-    }
-    if (update.name && update.name !== this.name) {
-      this.setName(update.name);
-    }
+    if (activeWep) this.setActiveWeapon(activeWep);
+    if (isScope !== undefined) this.setScopedState(isScope);
+    if (update.name && update.name !== this.name) this.setName(update.name);
   }
 
   snapToLatest() {
@@ -722,55 +518,39 @@ export class OpponentCharacter {
 
   update(deltaTime, currentSpeed = 0) {
     if (!this.isAlive && !this.isRagdoll) return;
-
     const dt = Math.min(0.08, deltaTime / 1000);
 
     if (this.isRagdoll) {
       this.animState = 'ragdoll';
       this.ragdollTime += dt;
       this.ragdollParts.forEach(part => {
-        part.pos.x += part.vx * dt;
-        part.pos.y += part.vy * dt;
-        part.pos.z += part.vz * dt;
+        part.pos.x += part.vx * dt; part.pos.y += part.vy * dt; part.pos.z += part.vz * dt;
         part.vy -= 18.0 * dt;
-
         if (part.pos.y < part.minY) {
-          part.pos.y = part.minY;
-          part.vy = -part.vy * 0.25;
-          part.vx *= 0.65;
-          part.vz *= 0.65;
+          part.pos.y = part.minY; part.vy = -part.vy * 0.25; part.vx *= 0.65; part.vz *= 0.65;
         }
-
         part.mesh.position.copyFrom(part.pos);
-        part.mesh.rotation.x += part.rotVx * dt;
-        part.mesh.rotation.y += part.rotVy * dt;
-        part.mesh.rotation.z += part.rotVz * dt;
-
-        if (this.ragdollTime > 1.2) {
-          part.mesh.visibility = Math.max(0, (2.0 - this.ragdollTime) / 0.8);
-        }
+        part.mesh.rotation.x += part.rotVx * dt; part.mesh.rotation.y += part.rotVy * dt; part.mesh.rotation.z += part.rotVz * dt;
+        if (this.ragdollTime > 1.2) part.mesh.visibility = Math.max(0, (2.0 - this.ragdollTime) / 0.8);
       });
       return;
     }
 
     const targetCrouchFactor = this.isCrouching ? 1.0 : 0.0;
-    this.crouchFactor = this.crouchFactor !== undefined
-      ? this.crouchFactor + (targetCrouchFactor - this.crouchFactor) * Math.min(1.0, 14 * dt)
-      : targetCrouchFactor;
+    this.crouchFactor = this.crouchFactor !== undefined ? this.crouchFactor + (targetCrouchFactor - this.crouchFactor) * Math.min(1.0, 14 * dt) : targetCrouchFactor;
 
     if (this.head) this.head.position.y = 1.88 - this.crouchFactor * 0.73;
+    if (this.headHitbox) this.headHitbox.position.y = 1.95 - this.crouchFactor * 0.75;
     if (this.torso) this.torso.position.y = 1.25 - this.crouchFactor * 0.50;
+    if (this.bodyHitbox) this.bodyHitbox.position.y = 1.25 - this.crouchFactor * 0.45;
     if (this.upperBodyAimPivot) this.upperBodyAimPivot.position.y = 1.45 - this.crouchFactor * 0.50;
 
     if (this.muzzleFlashTimer > 0) {
       this.muzzleFlashTimer -= dt;
-      if (this.muzzleFlashTimer <= 0 && this.muzzleFlash) {
-        this.muzzleFlash.isVisible = false;
-      }
+      if (this.muzzleFlashTimer <= 0 && this.muzzleFlash) this.muzzleFlash.isVisible = false;
     }
 
-    let meleeArmRotX = 0;
-    let meleeArmRotY = 0;
+    let meleeArmRotX = 0; let meleeArmRotY = 0;
     if (this.meleeSwingTimer > 0) {
       this.meleeSwingTimer -= dt;
       const progress = 1.0 - (this.meleeSwingTimer / 0.25);
@@ -778,11 +558,7 @@ export class OpponentCharacter {
       meleeArmRotY = -Math.sin(progress * Math.PI) * 0.6;
     }
 
-    this.upperBodyAimPivot.rotation.x = this.lerpAngle(
-      this.upperBodyAimPivot.rotation.x,
-      this.aimPitch,
-      14 * dt
-    );
+    this.upperBodyAimPivot.rotation.x = this.lerpAngle(this.upperBodyAimPivot.rotation.x, this.aimPitch, 14 * dt);
 
     let moveSpeed = currentSpeed;
     const estimatedServerTime = Date.now() + (this.serverClockOffset || 0);
@@ -791,7 +567,6 @@ export class OpponentCharacter {
     if (this.positionBuffer.length >= 2) {
       const oldest = this.positionBuffer[0];
       const newest = this.positionBuffer[this.positionBuffer.length - 1];
-
       if (renderTimestamp - newest.timestamp > 250) {
         this.targetPosition.set(newest.x, newest.y, newest.z);
         this.targetRotationY = newest.yaw !== undefined ? newest.yaw : newest.rotY;
@@ -800,11 +575,7 @@ export class OpponentCharacter {
         this.rootNode.rotation.y = this.targetRotationY;
       } else if (renderTimestamp >= newest.timestamp) {
         const extraSec = Math.min(0.20, Math.max(0, (renderTimestamp - newest.timestamp) / 1000));
-        this.targetPosition.set(
-          newest.x + (newest.vx || 0) * extraSec,
-          newest.y + (newest.vy || 0) * extraSec,
-          newest.z + (newest.vz || 0) * extraSec
-        );
+        this.targetPosition.set(newest.x + (newest.vx || 0) * extraSec, newest.y + (newest.vy || 0) * extraSec, newest.z + (newest.vz || 0) * extraSec);
         this.targetRotationY = newest.yaw !== undefined ? newest.yaw : newest.rotY;
         if (newest.pitch !== undefined) this.aimPitch = newest.pitch;
       } else if (renderTimestamp <= oldest.timestamp) {
@@ -812,38 +583,24 @@ export class OpponentCharacter {
         this.targetRotationY = oldest.yaw !== undefined ? oldest.yaw : oldest.rotY;
         if (oldest.pitch !== undefined) this.aimPitch = oldest.pitch;
       } else {
-        let p0 = oldest;
-        let p1 = newest;
+        let p0 = oldest; let p1 = newest;
         for (let i = 0; i < this.positionBuffer.length - 1; i++) {
-          if (
-            this.positionBuffer[i].timestamp <= renderTimestamp &&
-            renderTimestamp <= this.positionBuffer[i + 1].timestamp
-          ) {
-            p0 = this.positionBuffer[i];
-            p1 = this.positionBuffer[i + 1];
-            break;
+          if (this.positionBuffer[i].timestamp <= renderTimestamp && renderTimestamp <= this.positionBuffer[i + 1].timestamp) {
+            p0 = this.positionBuffer[i]; p1 = this.positionBuffer[i + 1]; break;
           }
         }
-
         const totalSpan = p1.timestamp - p0.timestamp;
         const alpha = totalSpan > 0 ? Math.max(0, Math.min(1.0, (renderTimestamp - p0.timestamp) / totalSpan)) : 1.0;
-
         this.targetPosition.x = p0.x + (p1.x - p0.x) * alpha;
         this.targetPosition.y = p0.y + (p1.y - p0.y) * alpha;
         this.targetPosition.z = p0.z + (p1.z - p0.z) * alpha;
         const y0 = p0.yaw !== undefined ? p0.yaw : p0.rotY;
         const y1 = p1.yaw !== undefined ? p1.yaw : p1.rotY;
         this.targetRotationY = this.lerpAngle(y0, y1, alpha);
-        if (p1.pitch !== undefined && p0.pitch !== undefined) {
-          this.aimPitch = p0.pitch + (p1.pitch - p0.pitch) * alpha;
-        }
+        if (p1.pitch !== undefined && p0.pitch !== undefined) this.aimPitch = p0.pitch + (p1.pitch - p0.pitch) * alpha;
       }
 
-      const distToTarget = Math.hypot(
-        this.targetPosition.x - this.rootNode.position.x,
-        this.targetPosition.z - this.rootNode.position.z
-      );
-
+      const distToTarget = Math.hypot(this.targetPosition.x - this.rootNode.position.x, this.targetPosition.z - this.rootNode.position.z);
       if (distToTarget > 10.0) {
         this.rootNode.position.copyFrom(this.targetPosition);
         this.rootNode.rotation.y = this.targetRotationY;
@@ -852,11 +609,8 @@ export class OpponentCharacter {
         const dy = this.targetPosition.y - this.rootNode.position.y;
         const dz = this.targetPosition.z - this.rootNode.position.z;
         moveSpeed = Math.hypot(dx, dz) / Math.max(0.001, dt);
-
         const smoothFactor = Math.min(1.0, 25 * dt);
-        this.rootNode.position.x += dx * smoothFactor;
-        this.rootNode.position.y += dy * smoothFactor;
-        this.rootNode.position.z += dz * smoothFactor;
+        this.rootNode.position.x += dx * smoothFactor; this.rootNode.position.y += dy * smoothFactor; this.rootNode.position.z += dz * smoothFactor;
         this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 20 * dt);
       }
     } else if (this.positionBuffer.length === 1) {
@@ -864,11 +618,7 @@ export class OpponentCharacter {
       this.targetPosition.set(single.x, single.y, single.z);
       this.targetRotationY = single.yaw !== undefined ? single.yaw : single.rotY;
       if (single.pitch !== undefined) this.aimPitch = single.pitch;
-
-      const distToTarget = Math.hypot(
-        this.targetPosition.x - this.rootNode.position.x,
-        this.targetPosition.z - this.rootNode.position.z
-      );
+      const distToTarget = Math.hypot(this.targetPosition.x - this.rootNode.position.x, this.targetPosition.z - this.rootNode.position.z);
       if (distToTarget > 10.0) {
         this.rootNode.position.copyFrom(this.targetPosition);
         this.rootNode.rotation.y = this.targetRotationY;
@@ -877,29 +627,19 @@ export class OpponentCharacter {
         const dy = this.targetPosition.y - this.rootNode.position.y;
         const dz = this.targetPosition.z - this.rootNode.position.z;
         moveSpeed = Math.hypot(dx, dz) / Math.max(0.001, dt);
-
         const smoothFactor = Math.min(1.0, 25 * dt);
-        this.rootNode.position.x += dx * smoothFactor;
-        this.rootNode.position.y += dy * smoothFactor;
-        this.rootNode.position.z += dz * smoothFactor;
+        this.rootNode.position.x += dx * smoothFactor; this.rootNode.position.y += dy * smoothFactor; this.rootNode.position.z += dz * smoothFactor;
         this.rootNode.rotation.y = this.lerpAngle(this.rootNode.rotation.y, this.targetRotationY, 20 * dt);
       }
     }
 
     this.lastInterpolatedSpeed = moveSpeed;
-    if (this.meleeSwingTimer > 0) {
-      this.animState = 'swing';
-    } else if (!this.onGround) {
-      this.animState = 'air';
-    } else if (this.isCrouching) {
-      this.animState = moveSpeed > 0.2 ? 'crouch-walk' : 'crouch';
-    } else if (this.isSprinting || moveSpeed >= 5.5) {
-      this.animState = 'sprint';
-    } else if (moveSpeed >= 0.2) {
-      this.animState = 'walk';
-    } else {
-      this.animState = 'idle';
-    }
+    if (this.meleeSwingTimer > 0) this.animState = 'swing';
+    else if (!this.onGround) this.animState = 'air';
+    else if (this.isCrouching) this.animState = moveSpeed > 0.2 ? 'crouch-walk' : 'crouch';
+    else if (this.isSprinting || moveSpeed >= 5.5) this.animState = 'sprint';
+    else if (moveSpeed >= 0.2) this.animState = 'walk';
+    else this.animState = 'idle';
 
     const isMoving = moveSpeed > 0.2;
     const isKnife = this.activeWeapon === 'knife';
@@ -907,20 +647,16 @@ export class OpponentCharacter {
     if (isMoving) {
       const animRate = Math.min(18.0, Math.max(8.0, moveSpeed * 1.6));
       this.walkAnimTimer += dt * animRate;
-
       const legAngle = Math.sin(this.walkAnimTimer) * 0.72;
       this.leftLegPivot.rotation.x = legAngle;
       this.rightLegPivot.rotation.x = -legAngle;
-
       this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + Math.abs(Math.sin(this.walkAnimTimer)) * 0.05;
       this.torso.rotation.x = 0.12;
-
       const armSway = Math.sin(this.walkAnimTimer) * 0.10;
       if (isKnife) {
         this.rightArmPivot.rotation.x = -0.75 + armSway + meleeArmRotX;
         this.rightArmPivot.rotation.y = 0.20 + meleeArmRotY;
-        this.leftArmPivot.rotation.x = 0.40 - armSway;
-        this.leftArmPivot.rotation.y = 0.10;
+        this.leftArmPivot.rotation.x = 0.40 - armSway; this.leftArmPivot.rotation.y = 0.10;
       } else {
         this.rightArmPivot.rotation.x = -1.15 + armSway + meleeArmRotX;
         this.leftArmPivot.rotation.x = -1.05 - armSway;
@@ -928,18 +664,14 @@ export class OpponentCharacter {
     } else {
       this.idleTimer += dt * 2.2;
       const breathe = Math.sin(this.idleTimer) * 0.02;
-
       this.leftLegPivot.rotation.x = this.lerpAngle(this.leftLegPivot.rotation.x, 0, 12 * dt);
       this.rightLegPivot.rotation.x = this.lerpAngle(this.rightLegPivot.rotation.x, 0, 12 * dt);
-
       this.torso.position.y = (1.25 - this.crouchFactor * 0.50) + breathe;
       this.torso.rotation.x = 0;
-
       if (isKnife) {
         this.rightArmPivot.rotation.x = -0.75 + breathe * 0.5 + meleeArmRotX;
         this.rightArmPivot.rotation.y = 0.20 + meleeArmRotY;
-        this.leftArmPivot.rotation.x = 0.20 + breathe * 0.3;
-        this.leftArmPivot.rotation.y = 0.10;
+        this.leftArmPivot.rotation.x = 0.20 + breathe * 0.3; this.leftArmPivot.rotation.y = 0.10;
       } else {
         this.rightArmPivot.rotation.x = -1.15 + breathe * 0.5 + meleeArmRotX;
         this.leftArmPivot.rotation.x = -1.05 - breathe * 0.5;
@@ -995,23 +727,17 @@ export class OpponentCharacter {
 
   setVisible(visible) {
     this.isAlive = visible;
-    
-    if (this.torso) {
-      this.torso.isVisible = visible;
-      this.torso.isPickable = visible; 
-    }
-    if (this.head) {
-      this.head.isVisible = visible;
-      this.head.isPickable = visible; 
-    }
-    
+    if (this.torso) this.torso.isVisible = visible;
+    if (this.head) this.head.isVisible = visible;
     if (this.leftArm) this.leftArm.isVisible = visible;
     if (this.rightArm) this.rightArm.isVisible = visible;
     if (this.leftLeg) this.leftLeg.isVisible = visible;
     if (this.rightLeg) this.rightLeg.isVisible = visible;
+    
+    if (this.headHitbox) { this.headHitbox.isPickable = visible; this.headHitbox.isVisible = visible; }
+    if (this.bodyHitbox) { this.bodyHitbox.isPickable = visible; this.bodyHitbox.isVisible = visible; }
 
     if (this.nameTagPlane) this.nameTagPlane.isVisible = visible;
-
     const isSniper = this.activeWeapon === 'sniper';
     if (this.sniperRifleMesh) this.sniperRifleMesh.setEnabled(visible && isSniper);
     if (this.combatKnifeMesh) this.combatKnifeMesh.setEnabled(visible && !isSniper);
@@ -1025,14 +751,10 @@ export class OpponentCharacter {
 
   setProtected(isProt) {
     this.isProtected = isProt;
-    if (this.shieldSphere) {
-      this.shieldSphere.isVisible = isProt && this.isAlive;
-    }
+    if (this.shieldSphere) this.shieldSphere.isVisible = isProt && this.isAlive;
   }
 
   dispose() {
-    if (this.rootNode) {
-      this.rootNode.dispose();
-    }
+    if (this.rootNode) this.rootNode.dispose();
   }
 }
