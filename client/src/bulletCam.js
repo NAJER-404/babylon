@@ -205,10 +205,6 @@ export class BulletCam {
       this.traveledDistance = 0;
       this.bulletPos.copyFrom(this.startPoint);
 
-      const packetAgeMs = killInfo?.timestamp ? (Date.now() - killInfo.timestamp) : 0;
-      this.lateTrimFactor = 1.0;
-      if (packetAgeMs > 400) this.lateTrimFactor = Math.min(3.0, 1.0 + (packetAgeMs - 400) / 300);
-
       if (this.bannerText) this.bannerText.textContent = this.perspective === 'victim' ? 'OPPONENT ELIMINATION REPLAY' : 'CINEMATIC KILL CAM';
       const distMeters = Math.max(1, Math.round(this.totalDistance));
       if (this.distTag) this.distTag.textContent = this.weaponType === 'knife' ? 'MELEE STRIKE' : `${distMeters} METERS`;
@@ -217,7 +213,9 @@ export class BulletCam {
         else this.targetLabel.textContent = this.isHeadshot ? '🎯 CRITICAL HEADSHOT ELIMINATION' : '☠ ONE-SHOT SNIPER ELIMINATION';
       }
 
-      timeManager.setTimeScale(CONFIG.BULLET_CAM.SLOW_MO_SCALE, true);
+      // TIME SCALE STARTS AT NORMAL SPEED (1.0) - NO SLOW MOTION YET
+      timeManager.setTimeScale(1.0, true);
+      
       this.scene.activeCamera = this.bulletCamera;
 
       if (this.xray && this.victim) {
@@ -266,7 +264,6 @@ export class BulletCam {
   }
 
   setupVictimCamera() {
-    // Improved cinematic angle: camera is set back and to the side, looking at the impact point
     const sideVec = Vector3.Cross(this.direction, Vector3.Up()).normalize();
     const camPos = this.hitPoint.add(sideVec.scale(2.8)).subtract(this.direction.scale(1.2)).add(new Vector3(0, 0.3, 0));
     this.bulletCamera.position.copyFrom(camPos);
@@ -312,7 +309,8 @@ export class BulletCam {
   }
 
   updateFlight(rawDtSec, elapsedSec) {
-    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.5 * (this.lateTrimFactor || 1.0); 
+    // BULLET FLIES FAST AT NORMAL SPEED
+    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 3.5; 
     this.traveledDistance += speed * rawDtSec;
     const progress = Math.min(1.0, this.traveledDistance / this.totalDistance);
 
@@ -328,7 +326,7 @@ export class BulletCam {
     if (this.perspective === 'shooter') {
       const camFollowDist = 1.8; const camFollowHeight = 0.35;
       const targetCamPos = this.bulletPos.subtract(this.direction.scale(camFollowDist)).add(new Vector3(0, camFollowHeight, 0));
-      this.bulletCamera.position = Vector3.Lerp(this.bulletCamera.position, targetCamPos, 14 * rawDtSec);
+      this.bulletCamera.position = Vector3.Lerp(this.bulletCamera.position, targetCamPos, 20 * rawDtSec);
       this.bulletCamera.setTarget(this.bulletPos.add(this.direction.scale(4.0)));
       this.bulletCamera.rotation.z = Math.sin(progress * Math.PI) * 0.12;
     } else {
@@ -337,14 +335,14 @@ export class BulletCam {
 
     const remainingDist = this.totalDistance - this.traveledDistance;
 
-    if (remainingDist <= CONFIG.BULLET_CAM.APPROACH_DISTANCE || progress >= 0.85) {
+    if (remainingDist <= 3.0 || progress >= 0.95) {
       this.playingSubPhase = 'APPROACH';
       this.phaseStartTime = performance.now();
     }
   }
 
   updateApproach(rawDtSec, elapsedSec) {
-    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 0.3 * (this.lateTrimFactor || 1.0);
+    const speed = CONFIG.BULLET_CAM.BULLET_SPEED * 1.5;
     this.traveledDistance += speed * rawDtSec;
     const progress = Math.min(1.0, this.traveledDistance / this.totalDistance);
 
@@ -354,10 +352,10 @@ export class BulletCam {
     const sideVec = Vector3.Cross(this.direction, Vector3.Up()).normalize();
     const orbitTargetPos = this.hitPoint.add(sideVec.scale(2.2)).subtract(this.direction.scale(0.8)).add(new Vector3(0, 0.45, 0));
 
-    this.bulletCamera.position = Vector3.Lerp(this.bulletCamera.position, orbitTargetPos, 12 * rawDtSec);
+    this.bulletCamera.position = Vector3.Lerp(this.bulletCamera.position, orbitTargetPos, 16 * rawDtSec);
     this.bulletCamera.setTarget(this.hitPoint);
 
-    if (progress >= 1.0 || elapsedSec > 1.5) {
+    if (progress >= 1.0 || elapsedSec > 0.8) {
       this.triggerImpact();
     }
   }
@@ -366,6 +364,9 @@ export class BulletCam {
     this.playingSubPhase = 'IMPACT';
     this.phaseStartTime = performance.now();
     
+    // THIS IS WHERE THE SLOW MOTION BEGINS!
+    // The moment the bullet hits, time scales down to 0.1x speed
+    timeManager.setTimeScale(CONFIG.BULLET_CAM.SLOW_MO_SCALE, true);
     timeManager.setHitStop(0.15 * 1000); 
     
     this.shakeIntensity = 0.3;
@@ -429,6 +430,7 @@ export class BulletCam {
     this.camState = BULLET_CAM_STATE.ENDING;
     this.phaseStartTime = performance.now();
 
+    // Restore normal time speed
     timeManager.setTimeScale(1.0);
     if (this.letterboxContainer) this.letterboxContainer.classList.add('hidden');
     this.scene.activeCamera = this.playerCamera;
