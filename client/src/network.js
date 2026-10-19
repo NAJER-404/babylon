@@ -7,7 +7,7 @@ import { CONFIG } from './config.js';
 export class NetworkManager {
   constructor() {
     this.socket = null;
-    this.connectionState = 'disconnected'; // 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+    this.connectionState = 'disconnected';
     this.roomCode = null;
     this.playerNumber = null;
     this.playerName = 'Player 1';
@@ -23,7 +23,7 @@ export class NetworkManager {
     this.smoothedPing = 0;
     this.maxPing = 0;
     this.jitter = 0;
-    this.serverClockOffset = 0; // Local wall time + offset = Server wall time
+    this.serverClockOffset = 0; 
     this.pingInterval = null;
     this.fallbackTimer = null;
     this.hasRegisteredListeners = false;
@@ -75,10 +75,11 @@ export class NetworkManager {
     this.onDebugServerHitboxes = null;
     this.onDisconnect = null;
 
-    // --- NEW: Matchmaking Callbacks ---
+    // Matchmaking Callbacks
     this.onMatchFound = null;
     this.onMatchmakingStatus = null;
     this.onMatchmakingCancelled = null;
+    this.onPlayerJoinedLate = null; // <--- NEW: Late Join Callback
 
     this.startPacketRateMonitor();
   }
@@ -111,7 +112,6 @@ export class NetworkManager {
 
     this.setConnectionState('connecting');
 
-    // 1. WebSocket-first with NO polling delay (Part 1)
     this.socket = io(serverUrl, {
       transports: ['websocket'],
       upgrade: false,
@@ -122,7 +122,6 @@ export class NetworkManager {
       timeout: 8000
     });
 
-    // 2. Fallback to polling transport if websocket fails to connect after 4s (Part 1)
     clearTimeout(this.fallbackTimer);
     this.fallbackTimer = setTimeout(() => {
       if (this.socket && !this.socket.connected) {
@@ -181,7 +180,7 @@ export class NetworkManager {
       }
     });
 
-    // --- NEW: Matchmaking Listeners ---
+    // Matchmaking Listeners
     this.socket.on('matchmaking_status', (data) => {
       if (this.onMatchmakingStatus) this.onMatchmakingStatus(data);
     });
@@ -196,13 +195,17 @@ export class NetworkManager {
     this.socket.on('matchmaking_cancelled', () => {
       if (this.onMatchmakingCancelled) this.onMatchmakingCancelled();
     });
-    // -----------------------------------
 
-    // Helper to receive with simulated lag / loss
+    // --- NEW: Late Join Listener ---
+    this.socket.on('player_joined_late', (data) => {
+      if (this.onPlayerJoinedLate) this.onPlayerJoinedLate(data);
+    });
+    // -------------------------------
+
     const receiveWithSim = (callback, eventName) => (data) => {
       this.packetsInCounter++;
       if (this.simulatedPacketLoss > 0 && Math.random() < this.simulatedPacketLoss) {
-        return; // drop packet
+        return; 
       }
       if (this.simulatedLatencyMs > 0) {
         setTimeout(() => callback(data), this.simulatedLatencyMs / 2);
@@ -307,7 +310,6 @@ export class NetworkManager {
       if (this.onShotResult) this.onShotResult(data);
     });
 
-    // Section H: App-level ping and pong carrying timestamps with EMA smoothing
     this.socket.on('pong', (payload) => this.handlePong(payload));
     this.socket.on('pong_check', (payload) => this.handlePong(payload));
   }
@@ -339,8 +341,6 @@ export class NetworkManager {
 
     this.maxPing = Math.max(this.maxPing * 0.95, rtt);
     this.jitter = Math.abs(rtt - this.smoothedPing);
-
-    // Section H: clock offset = serverTime - (clientSend + RTT / 2)
     this.serverClockOffset = serverTime - (sentTime + (rtt / 2));
 
     if (this.onPingUpdate) {
@@ -391,12 +391,11 @@ export class NetworkManager {
     return Math.max(0, Date.now() - this.lastSnapshotReceivedTime);
   }
 
-  // Get current server-estimated timestamp
   getEstimatedServerTime() {
     return Date.now() + this.serverClockOffset;
   }
 
-  // --- NEW: Matchmaking Methods ---
+  // Matchmaking Methods
   findMatch(playerName) {
     if (!this.socket || !this.socket.connected) {
       this.connect();
@@ -411,7 +410,6 @@ export class NetworkManager {
       this.socket.emit('cancel_find_match');
     }
   }
-  // --------------------------------
 
   createRoom(playerName) {
     return new Promise((resolve, reject) => {
@@ -482,14 +480,12 @@ export class NetworkManager {
     });
   }
 
-  // Dedicated 30 Hz Send Loop driven by Web Worker timer (not paused on window blur/tab switch)
   startSendLoop(getUpdatePayload, onBackgroundTick = null) {
     this.stopSendLoop();
     this.getUpdatePayload = getUpdatePayload;
     this.onBackgroundTick = onBackgroundTick;
     this.lastPeriodicSendTime = Date.now();
 
-    // 1. Inline Web Worker timer immune to background tab throttling (Part 1 & Section B)
     try {
       const workerBlob = new Blob([
         `let timer = null;
@@ -518,9 +514,7 @@ export class NetworkManager {
       console.warn('[Network] Inline Worker timer creation failed, relying on interval fallback:', e);
     }
 
-    // 2. Main thread fallback interval
     this.sendIntervalFallback = setInterval(() => {
-      // If worker did not fire recently (>= 30ms), fire here
       if (Date.now() - this.lastPeriodicSendTime >= 30) {
         this.emitPeriodicStateUpdate();
       }
@@ -559,7 +553,6 @@ export class NetworkManager {
     }
   }
 
-  // Compact volatile 30 Hz player state updates (Section B)
   sendPlayerUpdate(compactData) {
     if (!this.socket || !this.socket.connected) return;
 
@@ -571,7 +564,7 @@ export class NetworkManager {
     };
 
     if (this.simulatedPacketLoss > 0 && Math.random() < this.simulatedPacketLoss) {
-      return; // drop
+      return;
     }
 
     if (this.simulatedLatencyMs > 0) {
@@ -588,7 +581,6 @@ export class NetworkManager {
     }
   }
 
-  // Reliable emission with shotId & server-estimated timestamp (Part 2)
   sendShoot(shootData) {
     if (!this.socket || !this.socket.connected) return;
 

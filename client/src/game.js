@@ -76,7 +76,7 @@ export class Game {
     // Entities
     this.player = null;
     this.weapon = null;
-    this.opponents = {}; // <--- CHANGED: Now a dictionary for FFA
+    this.opponents = {}; // Dictionary for FFA
     this.botAI = null;
 
     // Hitbox Debug State
@@ -91,7 +91,7 @@ export class Game {
     this.bloodEffect = null;
     this.killCamVictimBody = null;
     
-    // Safety net & debug state (Step 1 & 2)
+    // Safety net & debug state
     this.isRenderLoopRunning = false;
     this.lastRenderError = 'None';
     this.lastShotReason = '--';
@@ -102,7 +102,7 @@ export class Game {
 
   init() {
     try {
-      // 1. Babylon.js Engine & Scene with WebGL context resilience
+      // 1. Babylon.js Engine & Scene
       try {
         this.engine = new Engine(this.canvas, true, {
           preserveDrawingBuffer: false,
@@ -119,7 +119,6 @@ export class Game {
       }
       this.engine.setHardwareScalingLevel(1.0);
 
-      // WebGL Context Lost & Restored observers (Step 1 item 10)
       if (this.engine.onContextLostObservable) {
         this.engine.onContextLostObservable.add(() => {
           console.error('[Engine] WebGL Context Lost!');
@@ -199,7 +198,6 @@ export class Game {
           inputManager.clearAll();
           if (this.scopeOverlay) this.scopeOverlay.forceReset();
           if (this.mode === GAME_MODE.ONLINE) {
-            // Section F: Never pause online matches on focus loss
             this.ui.showResumeBanner();
           } else if (this.mode === GAME_MODE.PRACTICE && !this.ui.isMenuOpen) {
             this.ui.showPauseMenu();
@@ -212,14 +210,12 @@ export class Game {
         }
       };
 
-      // Click resume banner to regain pointer lock in online matches (Section F)
       document.getElementById('resume-banner')?.addEventListener('click', () => {
         if (this.mode === GAME_MODE.ONLINE && !this.ui.isMenuOpen) {
           this.player.requestPointerLock();
         }
       });
 
-      // Section D: Snap remote characters to latest snapshot on tab restore
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden && this.mode === GAME_MODE.ONLINE) {
           for (const id in this.opponents) this.opponents[id].snapToLatest();
@@ -382,7 +378,8 @@ export class Game {
 
     this.network.onMatchmakingStatus = (data) => {
       if (data.status === 'searching') {
-        this.ui.showMatchmakingState(true);
+        // Pass count and max to the UI so it shows "1/2"
+        this.ui.showMatchmakingState(true, data.count, data.max);
       }
     };
 
@@ -394,6 +391,35 @@ export class Game {
     this.network.onMatchmakingCancelled = () => {
       this.ui.showMatchmakingState(false);
     };
+
+    // --- NEW: Handle Late Joiners ---
+    this.network.onPlayerJoinedLate = (data) => {
+      if (this.mode !== GAME_MODE.ONLINE) return;
+      
+      // Prevent duplicates
+      if (this.opponents[data.socketId]) return;
+
+      const opp = new OpponentCharacter(
+        this.scene,
+        this.shadowGenerator,
+        data.socketId,
+        data.playerNumber,
+        false,
+        data.name
+      );
+      
+      if (this.xrayEffect) this.xrayEffect.attachSkeleton(opp);
+      
+      opp.setPositionAndRotation(data.spawn, data.spawn.rotY);
+      opp.setVisible(true);
+      
+      if (this.isShowingClientHitboxes) opp.setHitboxesWireframe(true);
+      
+      this.opponents[data.socketId] = opp;
+      
+      this.ui.addKillFeedMessage('SYSTEM', `${data.name} joined the match`, false);
+    };
+    // --------------------------------
 
     // 3-2-1 Synchronized Countdown sequence
     this.network.onMatchCountdown = (data) => {
@@ -534,12 +560,10 @@ export class Game {
         this.killCamVictimBody = null;
       }
 
-      // Ensure all remote characters are visible after kill cam
       for (const id in this.opponents) {
         this.opponents[id].setVisible(true);
       }
 
-      // Update local player score
       this.playerScore = data.scores[this.network.socket?.id] || 0;
       this.ui.updateKillCounter(this.playerScore, CONFIG.GAME.SCORE_TO_WIN);
     };

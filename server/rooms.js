@@ -1,4 +1,4 @@
-// Server-side Room, Player & Combat Lifecycle Manager for 4-Player FFA
+// Server-side Room, Player & Combat Lifecycle Manager
 const SPAWN_POINTS = [
   { x: -62, y: 1.2, z: -62, rotY: Math.PI / 4 },
   { x: 62, y: 1.2, z: 62, rotY: (5 * Math.PI) / 4 },
@@ -7,7 +7,8 @@ const SPAWN_POINTS = [
 ];
 
 const MAX_PLAYERS = 4;
-const WIN_SCORE = 15; // Increased win score for FFA
+const MIN_PLAYERS_TO_START = 2; // <--- Starts with just 2 players
+const WIN_SCORE = 15; 
 const BODY_DAMAGE = 100;
 const HEAD_DAMAGE = 200;
 const LEG_DAMAGE = 80;
@@ -33,37 +34,58 @@ export class RoomManager {
     setInterval(() => this.cleanupProcessedShots(), 10 * 1000);
   }
 
+  broadcastMatchmakingStatus() {
+    for (const p of this.matchmakingQueue) {
+      this.io.to(p.socketId).emit('matchmaking_status', { 
+        status: 'searching', 
+        count: this.matchmakingQueue.length, 
+        max: MIN_PLAYERS_TO_START // Show 2 as the max needed to start
+      });
+    }
+  }
+
   addToMatchmaking(socket, rawName) {
     const playerName = this.sanitizeName(rawName, 'Player');
+    
+    // 1. Try to find an active room with space for late joiners
+    for (const [code, room] of this.rooms.entries()) {
+      if (room.status !== 'ended' && room.players.size < MAX_PLAYERS) {
+        const res = this.joinRoom(socket, code, playerName);
+        if (res && !res.error) {
+          this.io.to(socket.id).emit('match_found', { roomCode: code });
+          return;
+        }
+      }
+    }
+
+    // 2. Add to queue
     if (this.matchmakingQueue.some(p => p.socketId === socket.id)) return;
-
     this.matchmakingQueue.push({ socket, playerName, socketId: socket.id });
-    socket.emit('matchmaking_status', { status: 'searching', count: this.matchmakingQueue.length, max: MAX_PLAYERS });
+    this.broadcastMatchmakingStatus();
 
-    if (this.matchmakingQueue.length >= MAX_PLAYERS) {
-      // We have 4 players! Create a room and start.
-      const playersForMatch = this.matchmakingQueue.splice(0, MAX_PLAYERS);
+    // 3. Start a new match if 2 players are waiting
+    if (this.matchmakingQueue.length >= MIN_PLAYERS_TO_START) {
+      const playersForMatch = this.matchmakingQueue.splice(0, MIN_PLAYERS_TO_START);
       
-      // Create room with the first player
       const p1 = playersForMatch[0];
       const roomRes = this.createRoom(p1.socket, p1.playerName);
       const roomCode = roomRes.roomCode;
 
-      // Join the other 3 players
       for (let i = 1; i < playersForMatch.length; i++) {
         const p = playersForMatch[i];
         this.joinRoom(p.socket, roomCode, p.playerName);
       }
 
-      // Notify everyone
       for (const p of playersForMatch) {
         this.io.to(p.socketId).emit('match_found', { roomCode });
       }
+      this.broadcastMatchmakingStatus();
     }
   }
 
   removeFromMatchmaking(socketId) {
     this.matchmakingQueue = this.matchmakingQueue.filter(p => p.socketId !== socketId);
+    this.broadcastMatchmakingStatus();
   }
 
   setDebugHitboxesSubscription(socketId, enabled) {
@@ -108,7 +130,7 @@ export class RoomManager {
     };
     const room = {
       code: roomCode, status: 'waiting', players: new Map([[socket.id, player]]), playerList: [player],
-      createdAt: Date.now(), lastActivity: Date.now(), startTime: null, countdownTimer: null, killCamTimer: null, respawnTimers: new Map(), lastBroadcastState: new Map()
+      createdAt: Date.now(), lastActivity: Date.now(), startTime: null, countdownTimer: null, killCamTimer: null, respawnTimers: new Map(), lastBroadcastState: new Map(), currentCountdown: 3
     };
     this.rooms.set(roomCode, room);
     this.playerToRoom.set(socket.id, roomCode);
@@ -139,12 +161,11 @@ export class RoomManager {
     if (cleanCode.length !== 4) return { error: 'Room code must be exactly 4 letters' };
     const room = this.rooms.get(cleanCode);
     if (!room) return { error: 'Room not found' };
-    if (room.players.size >= MAX_PLAYERS || room.status !== 'waiting') return { error: 'Room is full or in match' };
+    if (room.players.size >= MAX_PLAYERS || room.status !== 'waiting' && room.status !== 'playing' && room.status !== 'countdown') return { error: 'Room is full or in match' };
 
     this.leaveCurrentRoom(socket.id);
     let playerName = this.sanitizeName(rawName, 'Player');
     
-    // Ensure unique name in room
     let nameSuffix = 1;
     let baseName = playerName;
     while (room.playerList.some(p => p.name.toLowerCase() === playerName.toLowerCase())) {
@@ -166,27 +187,49 @@ export class RoomManager {
     this.playerToRoom.set(socket.id, cleanCode);
     socket.join(cleanCode);
     
-    if (room.players.size === MAX_PLAYERS) {
+    if (room.players.size >= MIN_PLAYERS_TO_START && room.status === 'waiting') {
       this.startMatchCountdown(room);
     }
+
+    // Handle Late Joiners
+    if (room.status === 'countdown') {
+      this.io.to(socket.id).emit('match_countdown', {
+        count: room.currentCountdown,
+        roomCode: room.code,
+        players: room.playerList.map(p => ({ socketId: p.socketId, playerNumber: p.playerNumber, name: p.name, spawn: p.position })),
+        winScore: WIN_SCORE
+      });
+    } else if (room.status === 'playing') {
+      this.io.to(socket.id).emit('match_start', {
+        roomCode: room.code,
+        players: room.playerList.map(p => ({ socketId: p.socketId, playerNumber: p.playerNumber, name: p.name, spawn: p.position })),
+        winScore: WIN_SCORE, localId: socket.id, matchStartServerTime: room.startTime, duration: 600
+      });
+    }
+
+    // Notify existing players
+    socket.to(room.code).emit('player_joined_late', {
+      socketId: socket.id, playerNumber: playerNum, name: playerName, spawn: SPAWN_POINTS[spawnIndex]
+    });
     
     return { roomCode: cleanCode, playerNumber: playerNum, playerName, spawn: SPAWN_POINTS[spawnIndex] };
   }
 
   startMatchCountdown(room) {
     room.status = 'countdown';
-    let count = 3;
+    room.currentCountdown = 3;
     const matchInfo = {
       roomCode: room.code,
       players: room.playerList.map(p => ({ socketId: p.socketId, playerNumber: p.playerNumber, name: p.name, spawn: p.position })),
       winScore: WIN_SCORE
     };
     
-    this.io.to(room.code).emit('match_countdown', { count: 3, ...matchInfo });
+    this.io.to(room.code).emit('match_countdown', { count: room.currentCountdown, ...matchInfo });
+    
     room.countdownTimer = setInterval(() => {
-      count--;
-      if (count > 0) {
-        this.io.to(room.code).emit('match_countdown', { count, ...matchInfo });
+      room.currentCountdown--;
+      if (room.currentCountdown > 0) {
+        this.io.to(room.code).emit('match_countdown', { count: room.currentCountdown, ...matchInfo });
       } else {
         clearInterval(room.countdownTimer);
         room.countdownTimer = null;
@@ -315,7 +358,6 @@ export class RoomManager {
     if (this.processedShots.has(shotId)) return;
     this.processedShots.set(shotId, now);
 
-    // FIX: Get target from the exact ID the client hit
     const targetId = shootData.targetId;
     const target = room.players.get(targetId);
 
@@ -445,7 +487,6 @@ export class RoomManager {
       setTimeout(() => {
         if (!this.rooms.has(room.code)) return;
         
-        // Build current scores for ALL players
         const scores = {};
         room.playerList.forEach(p => { scores[p.socketId] = p.kills; });
 
@@ -495,7 +536,7 @@ export class RoomManager {
     this.io.to(roomCode).emit('rematch_update', { playerNumber: player.playerNumber, ready: true });
 
     const allReady = Array.from(room.players.values()).every(p => p.rematchReady);
-    if (allReady && room.players.size === MAX_PLAYERS) {
+    if (allReady && room.players.size >= MIN_PLAYERS_TO_START) {
       room.playerList.forEach((p, idx) => {
         p.health = 100; p.kills = 0; p.deaths = 0; p.isAlive = true; p.isProtected = false; p.rematchReady = false; p.activeWeapon = 'sniper';
         p.position = { ...SPAWN_POINTS[idx] }; p.rotation = { x: 0, y: SPAWN_POINTS[idx].rotY }; p.positionHistory = [];
