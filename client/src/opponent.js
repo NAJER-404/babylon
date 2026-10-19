@@ -86,6 +86,7 @@ export class OpponentCharacter {
     vestMat.diffuseColor = Color3.FromHexString(vestColorHex);
     vestMat.emissiveColor = Color3.FromHexString(vestColorHex).scale(0.45);
     vestMat.specularColor = new Color3(0.2, 0.2, 0.2);
+    this.vestMat = vestMat; // Save for debug toggle
 
     const accentMat = new StandardMaterial(`soldierAcc_${this.id}`, this.scene);
     accentMat.diffuseColor = Color3.FromHexString(accentColorHex);
@@ -98,6 +99,7 @@ export class OpponentCharacter {
     const skinMat = new StandardMaterial(`soldierSkin_${this.id}`, this.scene);
     skinMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_SKIN);
     skinMat.specularColor = new Color3(0.1, 0.1, 0.1);
+    this.skinMat = skinMat; // Save for debug toggle
 
     const pantsMat = new StandardMaterial(`soldierPants_${this.id}`, this.scene);
     pantsMat.diffuseColor = Color3.FromHexString(CONFIG.COLORS.TACTICAL_PANTS);
@@ -130,9 +132,17 @@ export class OpponentCharacter {
     this.torso.parent = this.rootNode;
     this.torso.position.y = 1.25;
     this.torso.material = vestMat;
-    this.torso.isPickable = false;
+    
+    // --- USE VISUAL TORSO AS HITBOX ---
+    this.torso.isPickable = true; 
+    this.torso.metadata = {
+      isHitbox: true,
+      hitPart: 'torso',
+      targetId: this.id,
+      targetType: this.isBot ? 'bot' : 'player'
+    };
 
-    // Tactical Vest Chest Plate
+    // Tactical Vest Chest Plate (Not pickable so ray passes through to torso)
     const chestPlate = MeshBuilder.CreateBox(`sChestPlate_${this.id}`, { width: 0.62, height: 0.44, depth: 0.08 }, this.scene);
     chestPlate.parent = this.torso;
     chestPlate.position = new Vector3(0, 0.12, 0.18);
@@ -159,9 +169,17 @@ export class OpponentCharacter {
     this.head.parent = this.rootNode;
     this.head.position.y = 1.88;
     this.head.material = skinMat;
-    this.head.isPickable = false;
+    
+    // --- USE VISUAL HEAD AS HITBOX ---
+    this.head.isPickable = true;
+    this.head.metadata = {
+      isHitbox: true,
+      hitPart: 'head',
+      targetId: this.id,
+      targetType: this.isBot ? 'bot' : 'player'
+    };
 
-    // Tactical Fast-Ops Helmet
+    // Tactical Fast-Ops Helmet (Not pickable so ray passes through to head)
     const helmet = MeshBuilder.CreateSphere(
       `sHelmet_${this.id}`,
       { diameterX: 0.48, diameterY: 0.42, diameterZ: 0.50, segments: 8 },
@@ -213,7 +231,7 @@ export class OpponentCharacter {
     this.rightArm.parent = this.rightArmPivot;
     this.rightArm.position = new Vector3(0, -0.34, 0);
     this.rightArm.material = vestMat;
-    this.rightArm.isPickable = false;
+    this.rightArm.isPickable = false; // Ignored by raycast
 
     const rightHand = MeshBuilder.CreateBox(`sRightHand_${this.id}`, { width: 0.22, height: 0.18, depth: 0.22 }, this.scene);
     rightHand.parent = this.rightArm;
@@ -234,7 +252,7 @@ export class OpponentCharacter {
     this.leftArm.parent = this.leftArmPivot;
     this.leftArm.position = new Vector3(0, -0.34, 0);
     this.leftArm.material = vestMat;
-    this.leftArm.isPickable = false;
+    this.leftArm.isPickable = false; // Ignored by raycast
 
     const leftHand = MeshBuilder.CreateBox(`sLeftHand_${this.id}`, { width: 0.22, height: 0.18, depth: 0.22 }, this.scene);
     leftHand.parent = this.leftArm;
@@ -390,61 +408,7 @@ export class OpponentCharacter {
     rightBoot.isPickable = false;
 
     // ==========================================
-    // 6. HITBOXES (Head, Torso, Legs)
-    // ==========================================
-    this.headHitbox = MeshBuilder.CreateSphere(
-      `hitbox_head_${this.id}`,
-      { diameter: 0.70, segments: 8 },
-      this.scene
-    );
-    this.headHitbox.parent = this.rootNode;
-    this.headHitbox.position.y = 1.95;
-    this.headHitbox.isVisible = true;
-    this.headHitbox.visibility = 0;
-    this.headHitbox.isPickable = true;
-    this.headHitbox.metadata = {
-      isHitbox: true,
-      hitPart: 'head', // <--- MATCHES WEAPON.JS
-      targetId: this.id,
-      targetType: this.isBot ? 'bot' : 'player'
-    };
-
-    this.bodyHitbox = MeshBuilder.CreateBox(
-      `hitbox_torso_${this.id}`, // Renamed for clarity
-      { width: 0.70, height: 0.90, depth: 0.40 },
-      this.scene
-    );
-    this.bodyHitbox.parent = this.rootNode;
-    this.bodyHitbox.position.y = 1.25;
-    this.bodyHitbox.isVisible = true;
-    this.bodyHitbox.visibility = 0;
-    this.bodyHitbox.isPickable = true;
-    this.bodyHitbox.metadata = {
-      isHitbox: true,
-      hitPart: 'torso', // <--- UPDATED FROM 'body' TO 'torso'
-      targetId: this.id,
-      targetType: this.isBot ? 'bot' : 'player'
-    };
-
-    this.legsHitbox = MeshBuilder.CreateBox(
-      `hitbox_legs_${this.id}`,
-      { width: 0.60, height: 0.90, depth: 0.40 },
-      this.scene
-    );
-    this.legsHitbox.parent = this.rootNode;
-    this.legsHitbox.position.y = 0.45;
-    this.legsHitbox.isVisible = true;
-    this.legsHitbox.visibility = 0;
-    this.legsHitbox.isPickable = true;
-    this.legsHitbox.metadata = {
-      isHitbox: true,
-      hitPart: 'legs', // <--- MATCHES WEAPON.JS
-      targetId: this.id,
-      targetType: this.isBot ? 'bot' : 'player'
-    };
-
-    // ==========================================
-    // 7. SPAWN PROTECTION BUBBLE
+    // 6. SPAWN PROTECTION BUBBLE
     // ==========================================
     this.shieldSphere = MeshBuilder.CreateSphere(`soldierShield_${this.id}`, { diameter: 2.6, segments: 16 }, this.scene);
     this.shieldSphere.parent = this.rootNode;
@@ -668,8 +632,10 @@ export class OpponentCharacter {
 
   setHitboxesWireframe(visible) {
     this.hitboxesWireframeVisible = !!visible;
-    const hitboxes = [this.headHitbox, this.bodyHitbox, this.legsHitbox];
     
+    // Use the visual head and torso for debug wireframe
+    const hitboxes = [this.head, this.torso]; 
+
     if (visible && !this.debugWireframeMat) {
       this.debugWireframeMat = new StandardMaterial(`hitboxWireMat_${this.id}`, this.scene);
       this.debugWireframeMat.wireframe = true;
@@ -681,12 +647,9 @@ export class OpponentCharacter {
       if (!m) return;
       if (visible) {
         m.material = this.debugWireframeMat;
-        m.isVisible = true;
-        m.visibility = 1.0;
       } else {
-        m.material = null;
-        m.isVisible = true;
-        m.visibility = 0;
+        // Restore original material
+        m.material = (m === this.head) ? this.skinMat : this.vestMat;
       }
     });
   }
@@ -698,8 +661,6 @@ export class OpponentCharacter {
   pushNetworkUpdate(update) {
     if (!update) return;
 
-    // Unpack compact protocol keys (x, y, z, yaw, pitch, vx, vz, crouch, sprint, scoped, onGround, swing, weapon)
-    // and verbose object/array protocol keys (p, r, v, position, rotation, velocity, health, etc.)
     let posX = this.rootNode.position.x;
     if (update.x !== undefined) posX = Number(update.x);
     else if (update.p && update.p.length >= 3) posX = Number(update.p[0]);
@@ -801,7 +762,6 @@ export class OpponentCharacter {
     }
   }
 
-  // Snap directly to newest snapshot (used on tab visibility restore - Section D)
   snapToLatest() {
     if (this.positionBuffer.length === 0) return;
     const latest = this.positionBuffer[this.positionBuffer.length - 1];
@@ -814,7 +774,6 @@ export class OpponentCharacter {
     if (latest.pitch !== undefined) this.aimPitch = latest.pitch;
   }
 
-  // Process latest snapshot in background worker timer when page is hidden (Section D)
   applyBackgroundTick() {
     if (this.positionBuffer.length === 0) return;
     const latest = this.positionBuffer[this.positionBuffer.length - 1];
@@ -858,15 +817,13 @@ export class OpponentCharacter {
       return;
     }
 
-    // Crouch height and hitbox adaptation
+    // Crouch height and visual adaptation
     const targetCrouchFactor = this.isCrouching ? 1.0 : 0.0;
     this.crouchFactor = this.crouchFactor !== undefined
       ? this.crouchFactor + (targetCrouchFactor - this.crouchFactor) * Math.min(1.0, 14 * dt)
       : targetCrouchFactor;
 
-    if (this.headHitbox) this.headHitbox.position.y = 1.95 - this.crouchFactor * 0.75;
-    if (this.bodyHitbox) this.bodyHitbox.position.y = 1.25 - this.crouchFactor * 0.45;
-    if (this.legsHitbox) this.legsHitbox.position.y = 0.45 - this.crouchFactor * 0.15;
+    // Update visual meshes (which are now the hitboxes)
     if (this.head) this.head.position.y = 1.88 - this.crouchFactor * 0.73;
     if (this.torso) this.torso.position.y = 1.25 - this.crouchFactor * 0.50;
     if (this.upperBodyAimPivot) this.upperBodyAimPivot.position.y = 1.45 - this.crouchFactor * 0.50;
@@ -905,7 +862,6 @@ export class OpponentCharacter {
       const oldest = this.positionBuffer[0];
       const newest = this.positionBuffer[this.positionBuffer.length - 1];
 
-      // If buffer is more than 250 ms behind target, snap directly to newest snapshot
       if (renderTimestamp - newest.timestamp > 250) {
         this.targetPosition.set(newest.x, newest.y, newest.z);
         this.targetRotationY = newest.yaw !== undefined ? newest.yaw : newest.rotY;
@@ -913,7 +869,6 @@ export class OpponentCharacter {
         this.rootNode.position.copyFrom(this.targetPosition);
         this.rootNode.rotation.y = this.targetRotationY;
       } else if (renderTimestamp >= newest.timestamp) {
-        // Buffer ran dry: extrapolate for at most 200 ms using velocity, then hold
         const extraSec = Math.min(0.20, Math.max(0, (renderTimestamp - newest.timestamp) / 1000));
         this.targetPosition.set(
           newest.x + (newest.vx || 0) * extraSec,
@@ -927,7 +882,6 @@ export class OpponentCharacter {
         this.targetRotationY = oldest.yaw !== undefined ? oldest.yaw : oldest.rotY;
         if (oldest.pitch !== undefined) this.aimPitch = oldest.pitch;
       } else {
-        // Interpolate between surrounding snapshots
         let p0 = oldest;
         let p1 = newest;
         for (let i = 0; i < this.positionBuffer.length - 1; i++) {
@@ -961,7 +915,6 @@ export class OpponentCharacter {
       );
 
       if (distToTarget > 10.0) {
-        // Instant teleport/spawn snap
         this.rootNode.position.copyFrom(this.targetPosition);
         this.rootNode.rotation.y = this.targetRotationY;
       } else {
@@ -1115,27 +1068,20 @@ export class OpponentCharacter {
 
   setVisible(visible) {
     this.isAlive = visible;
-    if (this.torso) this.torso.isVisible = visible;
-    if (this.head) this.head.isVisible = visible;
+    
+    if (this.torso) {
+      this.torso.isVisible = visible;
+      this.torso.isPickable = visible; // Make torso pickable only when alive
+    }
+    if (this.head) {
+      this.head.isVisible = visible;
+      this.head.isPickable = visible; // Make head pickable only when alive
+    }
+    
     if (this.leftArm) this.leftArm.isVisible = visible;
     if (this.rightArm) this.rightArm.isVisible = visible;
     if (this.leftLeg) this.leftLeg.isVisible = visible;
     if (this.rightLeg) this.rightLeg.isVisible = visible;
-    if (this.headHitbox) {
-      this.headHitbox.isPickable = visible;
-      this.headHitbox.isVisible = visible;
-      this.headHitbox.visibility = this.hitboxesWireframeVisible ? 1.0 : 0;
-    }
-    if (this.bodyHitbox) {
-      this.bodyHitbox.isPickable = visible;
-      this.bodyHitbox.isVisible = visible;
-      this.bodyHitbox.visibility = this.hitboxesWireframeVisible ? 1.0 : 0;
-    }
-    if (this.legsHitbox) {
-      this.legsHitbox.isPickable = visible;
-      this.legsHitbox.isVisible = visible;
-      this.legsHitbox.visibility = this.hitboxesWireframeVisible ? 1.0 : 0;
-    }
 
     if (this.nameTagPlane) this.nameTagPlane.isVisible = visible;
 
