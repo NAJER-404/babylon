@@ -76,7 +76,7 @@ export class Game {
     // Entities
     this.player = null;
     this.weapon = null;
-    this.opponent = null;
+    this.opponents = {}; // <--- CHANGED: Now a dictionary for FFA
     this.botAI = null;
 
     // Hitbox Debug State
@@ -219,10 +219,10 @@ export class Game {
         }
       });
 
-      // Section D: Snap remote character to latest snapshot on tab restore
+      // Section D: Snap remote characters to latest snapshot on tab restore
       document.addEventListener('visibilitychange', () => {
-        if (!document.hidden && this.opponent && this.mode === GAME_MODE.ONLINE) {
-          this.opponent.snapToLatest();
+        if (!document.hidden && this.mode === GAME_MODE.ONLINE) {
+          for (const id in this.opponents) this.opponents[id].snapToLatest();
         }
       });
 
@@ -292,26 +292,17 @@ export class Game {
   setupUICallbacks() {
     this.ui.registerCallbacks({
       onUiClick: () => this.audio.playClick(),
-
-      onStartPractice: (difficulty) => {
-        this.startPracticeMode(difficulty);
-      },
-
-      onOpenOnlineModal: () => {
-        this.network.connect();
-      },
-
-      // --- NEW: Matchmaking UI Callbacks ---
+      onStartPractice: (difficulty) => this.startPracticeMode(difficulty),
+      onOpenOnlineModal: () => this.network.connect(),
+      
       onFindMatch: (playerName) => {
         this.network.connect();
         this.network.findMatch(playerName);
       },
-
       onCancelFindMatch: () => {
         this.network.cancelFindMatch();
       },
-      // ------------------------------------
-
+      
       onCreateRoom: async (playerName) => {
         try {
           this.network.connect();
@@ -355,32 +346,17 @@ export class Game {
         }
       },
 
-      onSensitivityChange: (val) => {
-        this.player.setSensitivity(val * 0.001);
-      },
-
-      onInvertYChange: (val) => {
-        this.player.setInvertY(val);
-      },
-
-      onVolumeChange: (val) => {
-        this.audio.setVolume(val);
-      },
-
-      onFovChange: (degrees) => {
-        const rads = (degrees * Math.PI) / 180;
-        this.player.setFov(rads);
-      },
-
-      onBulletCamToggle: (val) => {
-        if (this.bulletCam) this.bulletCam.setEnabled(val);
-      },
+      onSensitivityChange: (val) => this.player.setSensitivity(val * 0.001),
+      onInvertYChange: (val) => this.player.setInvertY(val),
+      onVolumeChange: (val) => this.audio.setVolume(val),
+      onFovChange: (degrees) => this.player.setFov((degrees * Math.PI) / 180),
+      onBulletCamToggle: (val) => { if (this.bulletCam) this.bulletCam.setEnabled(val); },
 
       onToggleClientHitboxes: () => {
         this.isShowingClientHitboxes = !this.isShowingClientHitboxes;
         this.ui.setClientHitboxesButtonState(this.isShowingClientHitboxes);
-        if (this.opponent) {
-          this.opponent.setHitboxesWireframe(this.isShowingClientHitboxes);
+        for (const id in this.opponents) {
+          this.opponents[id].setHitboxesWireframe(this.isShowingClientHitboxes);
         }
       },
 
@@ -404,7 +380,6 @@ export class Game {
       this.ui.updateConnectionStatus(status);
     };
 
-    // --- NEW: Matchmaking Network Callbacks ---
     this.network.onMatchmakingStatus = (data) => {
       if (data.status === 'searching') {
         this.ui.showMatchmakingState(true);
@@ -412,8 +387,6 @@ export class Game {
     };
 
     this.network.onMatchFound = (data) => {
-      // The server automatically creates the room, joins the player, and starts the countdown.
-      // We just need to hide the matchmaking UI and wait for the countdown overlay.
       this.ui.showMatchmakingState(false);
       this.ui.hideAllModals();
     };
@@ -421,13 +394,11 @@ export class Game {
     this.network.onMatchmakingCancelled = () => {
       this.ui.showMatchmakingState(false);
     };
-    // --------------------------------------------
 
     // 3-2-1 Synchronized Countdown sequence
     this.network.onMatchCountdown = (data) => {
-      const p1 = data.players?.[0]?.name || 'Player 1';
-      const p2 = data.players?.[1]?.name || 'Player 2';
-      this.ui.showCountdown(data.count, p1, p2);
+      const names = data.players.map(p => p.name);
+      this.ui.showCountdown(data.count, names.join(', '), `FIRST TO ${data.winScore}`);
     };
 
     // Both players released at 0
@@ -439,25 +410,23 @@ export class Game {
     this.network.onWorldState = (data) => {
       if (this.mode !== GAME_MODE.ONLINE || !data?.players) return;
 
-      const myId = this.localId || this.network.localId || this.network.socket?.id;
-      const remoteId = this.remoteId || this.network.remoteId;
+      const myId = this.localId || this.network.socket?.id;
 
       for (const p of data.players) {
         const pId = p.id || p.socketId;
 
-        // Section A: Snapshot for remoteId goes ONLY to remote opponent; localId goes ONLY to local player
-        if (remoteId && pId === remoteId && this.opponent) {
-          this.opponent.setServerClockOffset(this.network.serverClockOffset);
-          if (!p.timestamp && !p.t) {
-            p.timestamp = data.serverTime || data.t || data.timestamp || Date.now();
-          }
-          this.opponent.pushNetworkUpdate(p);
-        } else if (pId === myId && this.player) {
+        if (pId === myId && this.player) {
           const hp = p.health !== undefined ? p.health : p.hp;
           if (hp !== undefined && hp !== this.player.health) {
             this.player.health = hp;
             this.ui.updateHealth(hp);
           }
+        } else if (this.opponents[pId]) {
+          this.opponents[pId].setServerClockOffset(this.network.serverClockOffset);
+          if (!p.timestamp && !p.t) {
+            p.timestamp = data.serverTime || data.t || data.timestamp || Date.now();
+          }
+          this.opponents[pId].pushNetworkUpdate(p);
         }
       }
     };
@@ -478,8 +447,9 @@ export class Game {
     };
 
     this.network.onOpponentSwitchWeapon = (data) => {
-      if (this.opponent) {
-        this.opponent.setActiveWeapon(data.weaponId);
+      const opp = this.opponents[data.socketId];
+      if (opp) {
+        opp.setActiveWeapon(data.weaponId);
       }
     };
 
@@ -493,14 +463,12 @@ export class Game {
       this.player.takeDamage(data.damage, data.attackerPosition, data.part);
     };
 
-    // SYNCHRONIZED DUAL KILL CAM FOR BOTH SHOOTER AND VICTIM
     this.network.onKillCam = (data) => {
       const myId = this.network.socket?.id;
       const isShooter = data.shooterId === myId;
       const isVictim = data.victimId === myId;
       const isHeadshot = data.isHeadshot || data.hitPart === 'head';
 
-      // Lock input for both players during replay
       this.player.setInputLocked(true);
       if (this.scopeOverlay) this.scopeOverlay.forceReset();
 
@@ -512,26 +480,26 @@ export class Game {
 
       const killInfo = {
         killId: data.killId,
-        killer: data.shooterName || (isShooter ? 'You' : (this.opponent?.name || 'Opponent')),
-        victim: data.victimName || (isVictim ? 'You' : (this.opponent?.name || 'Opponent')),
+        killer: data.shooterName || (isShooter ? 'You' : 'Opponent'),
+        victim: data.victimName || (isVictim ? 'You' : 'Opponent'),
         isHeadshot,
         weaponType: data.weaponType || 'sniper',
         timestamp: data.timestamp
       };
 
-      if (isShooter && this.bulletCam && this.opponent) {
-        // Shooter perspective: bullet follow / tracking
-        this.bulletCam.start('shooter', startVec, hitVec, this.opponent, isHeadshot, killInfo, () => {});
+      if (isShooter && this.bulletCam) {
+        const victimChar = this.opponents[data.victimId];
+        if (victimChar) {
+          this.bulletCam.start('shooter', startVec, hitVec, victimChar, isHeadshot, killInfo, () => {});
+        } else {
+          this.bulletCam.complete();
+        }
       } else if (isVictim && this.bulletCam) {
-        // Victim perspective: cinematic incoming view
         this.player.die();
         
-        // --- FIX: Spawn a dummy humanoid body for the victim so we can see the ragdoll and X-ray ---
         if (this.killCamVictimBody) {
           this.killCamVictimBody.dispose();
         }
-        const victimPos = data.victimPos || { x: 0, y: 0, z: 0 };
-        const victimYaw = data.victimRot ? data.victimRot.y : 0;
         
         this.killCamVictimBody = new OpponentCharacter(
           this.scene,
@@ -542,62 +510,59 @@ export class Game {
           this.player.name || 'You'
         );
         
-        this.killCamVictimBody.setPositionAndRotation(victimPos, victimYaw);
+        this.killCamVictimBody.setPositionAndRotation(data.victimPos || {x:0,y:0,z:0}, data.victimRot ? data.victimRot.y : 0);
         
         if (this.xrayEffect) {
           this.xrayEffect.attachSkeleton(this.killCamVictimBody);
         }
         
         this.bulletCam.start('victim', startVec, hitVec, this.killCamVictimBody, isHeadshot, killInfo, () => {});
+      } else {
+        // Spectator of a kill between two other players
+        this.bulletCam.start('spectator', startVec, hitVec, null, isHeadshot, killInfo, () => {});
       }
     };
 
-    // Server announces kill cam concluded: score updates & input unlocked
     this.network.onKillCamEnd = (data) => {
       if (this.bulletCam && this.bulletCam.isActive) {
         this.bulletCam.complete();
       }
       this.player.setInputLocked(false);
       
-      // Cleanup the temporary victim body
       if (this.killCamVictimBody) {
         this.killCamVictimBody.dispose();
         this.killCamVictimBody = null;
       }
 
-      // Section D: Ensure remote character is visible and active after kill cam
-      if (this.opponent) {
-        this.opponent.setVisible(true);
+      // Ensure all remote characters are visible after kill cam
+      for (const id in this.opponents) {
+        this.opponents[id].setVisible(true);
       }
 
-      if (this.player.playerNumber === 1) {
-        this.playerScore = data.scores.p1Kills;
-        this.enemyScore = data.scores.p2Kills;
-      } else {
-        this.playerScore = data.scores.p2Kills;
-        this.enemyScore = data.scores.p1Kills;
-      }
-
-      this.ui.updateScore(this.playerScore, this.enemyScore, 'YOU', this.opponent?.name || 'OPPONENT');
+      // Update local player score
+      this.playerScore = data.scores[this.network.socket?.id] || 0;
       this.ui.updateKillCounter(this.playerScore, CONFIG.GAME.SCORE_TO_WIN);
     };
 
     this.network.onPlayerKilled = (data) => {
-      const isMeKiller = data.killerId === this.network.socket?.id;
-      const isHeadshot = data.hitPart === 'head';
+      const myId = this.network.socket?.id;
+      const isMeKiller = data.killerId === myId;
+      const isMeVictim = data.victimId === myId;
 
-      const killerName = isMeKiller ? 'You' : (this.opponent?.name || 'Opponent');
-      const victimName = isMeKiller ? (this.opponent?.name || 'Opponent') : 'You';
+      const killerName = isMeKiller ? 'You' : (this.opponents[data.killerId]?.name || 'Opponent');
+      const victimName = isMeVictim ? 'You' : (this.opponents[data.victimId]?.name || 'Opponent');
 
-      this.ui.addKillFeedMessage(killerName, victimName, isHeadshot);
+      this.ui.addKillFeedMessage(killerName, victimName, data.hitPart === 'head');
 
-      if (!isMeKiller) {
+      if (isMeVictim) {
         this.player.die();
       }
     };
 
     this.network.onPlayerRespawned = (data) => {
-      const isMe = data.socketId === this.network.socket?.id;
+      const myId = this.network.socket?.id;
+      const isMe = data.socketId === myId;
+
       if (isMe) {
         this.player.spawnAt(data.spawn, data.playerNumber);
         this.weapon.resetAmmo();
@@ -606,20 +571,21 @@ export class Game {
         setTimeout(() => {
           this.ui.setSpawnProtection(false);
         }, data.protectedDurationMs || 2000);
-      } else if (this.opponent) {
-        this.opponent.resetRagdoll();
-        this.opponent.setPositionAndRotation(data.spawn, data.spawn.rotY);
-        this.opponent.setVisible(true);
-        this.opponent.setProtected(true);
+      } else if (this.opponents[data.socketId]) {
+        const opp = this.opponents[data.socketId];
+        opp.resetRagdoll();
+        opp.setPositionAndRotation(data.spawn, data.spawn.rotY);
+        opp.setVisible(true);
+        opp.setProtected(true);
         setTimeout(() => {
-          if (this.opponent) this.opponent.setProtected(false);
+          if (opp) opp.setProtected(false);
         }, data.protectedDurationMs || 2000);
       }
     };
 
     this.network.onMatchOver = (data) => {
-      const isVictory = data.winnerNumber === this.player.playerNumber;
-      this.ui.showGameOver(isVictory, this.playerScore, this.enemyScore);
+      const isVictory = data.winnerId === this.network.socket?.id;
+      this.ui.showGameOver(isVictory, this.playerScore, 0);
       this.player.exitPointerLock();
     };
 
@@ -634,11 +600,12 @@ export class Game {
         this.weapon.resetAmmo();
       }
 
-      const oppData = data.players.find(p => p.socketId !== this.network.socket?.id);
-      if (oppData && this.opponent) {
-        this.opponent.resetRagdoll();
-        this.opponent.setPositionAndRotation(oppData.spawn, oppData.spawn.rotY);
-        this.opponent.setVisible(true);
+      for (const p of data.players) {
+        if (p.socketId !== this.network.socket?.id && this.opponents[p.socketId]) {
+          this.opponents[p.socketId].resetRagdoll();
+          this.opponents[p.socketId].setPositionAndRotation(p.spawn, p.spawn.rotY);
+          this.opponents[p.socketId].setVisible(true);
+        }
       }
 
       this.ui.showHUD();
@@ -669,13 +636,11 @@ export class Game {
     this.playerScore = 0;
     this.enemyScore = 0;
 
-    if (this.opponent) {
-      this.opponent.dispose();
-      this.opponent = null;
-    }
+    for (const id in this.opponents) { this.opponents[id].dispose(); }
+    this.opponents = {};
     this.botAI = null;
 
-    this.opponent = new OpponentCharacter(
+    const bot = new OpponentCharacter(
       this.scene,
       this.shadowGenerator,
       'bot_opponent',
@@ -683,24 +648,26 @@ export class Game {
       true,
       `BOT (${difficulty.toUpperCase()})`
     );
+    this.opponents['bot_opponent'] = bot;
 
     if (this.xrayEffect) {
-      this.xrayEffect.attachSkeleton(this.opponent);
+      this.xrayEffect.attachSkeleton(bot);
     }
 
     this.botAI = new BotAI(
       this.scene,
-      this.opponent,
+      bot,
       this.player,
       this.audio,
       difficulty
     );
 
     this.player.spawnAt(CONFIG.GAME.SPAWNS[0], 1);
-    this.opponent.setPositionAndRotation(CONFIG.GAME.SPAWNS[1], CONFIG.GAME.SPAWNS[1].rotY);
-    this.opponent.setVisible(true);
+    bot.setPositionAndRotation(CONFIG.GAME.SPAWNS[1], CONFIG.GAME.SPAWNS[1].rotY);
+    bot.setVisible(true);
+    
     if (this.isShowingClientHitboxes) {
-      this.opponent.setHitboxesWireframe(true);
+      bot.setHitboxesWireframe(true);
     }
 
     this.weapon.resetAmmo();
@@ -722,60 +689,43 @@ export class Game {
     this.playerScore = 0;
     this.enemyScore = 0;
 
-    if (this.opponent) {
-      this.opponent.dispose();
-      this.opponent = null;
-    }
+    for (const id in this.opponents) { this.opponents[id].dispose(); }
+    this.opponents = {};
     this.botAI = null;
 
-    this.localId = matchData.localId || this.network.localId || this.network.socket?.id;
-    this.remoteId = matchData.remoteId || this.network.remoteId;
-
-    const myId = this.localId;
-    let myInfo = null;
-    let oppInfo = null;
-
-    if (myId && matchData.players) {
-      myInfo = matchData.players.find(p => (p.socketId && p.socketId === myId) || (p.id && p.id === myId));
-      oppInfo = matchData.players.find(p => (p.socketId && p.socketId !== myId) || (p.id && p.id !== myId));
-    }
-    if (!oppInfo && this.remoteId && matchData.players) {
-      oppInfo = matchData.players.find(p => (p.socketId && p.socketId === this.remoteId) || (p.id && p.id === this.remoteId));
-    }
-    if (!myInfo && matchData.players) {
-      myInfo = matchData.players[0];
-      oppInfo = matchData.players[1] || matchData.players[0];
+    this.localId = this.network.socket?.id;
+    
+    const myData = matchData.players.find(p => p.socketId === this.localId);
+    if (myData) {
+      this.player.playerNumber = myData.playerNumber;
+      this.player.spawnAt(myData.spawn, myData.playerNumber);
     }
 
-    const mySpawn = myInfo?.spawn || CONFIG.GAME.SPAWNS[0];
-    const myNum = myInfo?.playerNumber || myInfo?.num || (myInfo?.socketId === matchData.players?.[0]?.socketId ? 1 : 2);
-    this.player.playerNumber = myNum;
-    this.player.spawnAt(mySpawn, myNum);
+    // Spawn all OTHER players as opponents
+    for (const p of matchData.players) {
+      if (p.socketId !== this.localId) {
+        const opp = new OpponentCharacter(
+          this.scene,
+          this.shadowGenerator,
+          p.socketId,
+          p.playerNumber,
+          false,
+          p.name
+        );
+        
+        if (this.xrayEffect) {
+          this.xrayEffect.attachSkeleton(opp);
+        }
 
-    const oppId = this.remoteId || oppInfo?.socketId || oppInfo?.id || 'opponent_player';
-    this.remoteId = oppId;
-    const oppNum = oppInfo?.playerNumber || oppInfo?.num || (myNum === 1 ? 2 : 1);
-    const oppName = oppInfo?.name || 'Opponent';
-    const oppSpawn = oppInfo?.spawn || CONFIG.GAME.SPAWNS[1];
+        opp.setPositionAndRotation(p.spawn, p.spawn.rotY);
+        opp.setVisible(true);
+        
+        if (this.isShowingClientHitboxes) {
+          opp.setHitboxesWireframe(true);
+        }
 
-    this.opponent = new OpponentCharacter(
-      this.scene,
-      this.shadowGenerator,
-      oppId,
-      oppNum,
-      false,
-      oppName
-    );
-
-    if (this.xrayEffect) {
-      this.xrayEffect.attachSkeleton(this.opponent);
-    }
-
-    this.opponent.setPositionAndRotation(oppSpawn, oppSpawn.rotY !== undefined ? oppSpawn.rotY : Math.PI);
-    this.opponent.setVisible(true);
-    this.opponent.setServerClockOffset(this.network.serverClockOffset);
-    if (this.isShowingClientHitboxes) {
-      this.opponent.setHitboxesWireframe(true);
+        this.opponents[p.socketId] = opp;
+      }
     }
 
     this.sendSeq = 0;
@@ -786,14 +736,14 @@ export class Game {
       }
       return null;
     }, () => {
-      if (document.hidden && this.mode === GAME_MODE.ONLINE && this.opponent) {
-        this.opponent.applyBackgroundTick();
+      if (document.hidden && this.mode === GAME_MODE.ONLINE) {
+        for (const id in this.opponents) this.opponents[id].applyBackgroundTick();
       }
     });
 
     this.weapon.resetAmmo();
     this.ui.updateHealth(CONFIG.GAME.MAX_HEALTH);
-    this.ui.updateScore(0, 0, 'YOU', oppName.toUpperCase());
+    this.ui.updateScore(0, 0, 'YOU', 'FFA');
     this.ui.updateKillCounter(0, CONFIG.GAME.SCORE_TO_WIN);
     this.ui.showHUD();
 
@@ -823,9 +773,7 @@ export class Game {
         this.scene.activeCamera = this.player.camera;
         this.player.camera.minZ = 0.1;
         this.player.camera.maxZ = 1200;
-        const spawn = this.mode === GAME_MODE.ONLINE
-          ? CONFIG.GAME.SPAWNS[this.player.playerNumber === 2 ? 1 : 0]
-          : CONFIG.GAME.SPAWNS[0];
+        const spawn = CONFIG.GAME.SPAWNS[0];
         this.player.spawnAt(spawn, this.player.playerNumber || 1);
       }
 
@@ -844,31 +792,32 @@ export class Game {
     const result = this.weapon.attack(moveState);
     if (!result || !result.fired) return;
 
-    if (this.mode === GAME_MODE.PRACTICE && this.opponent && this.opponent.isAlive) {
+    if (this.mode === GAME_MODE.PRACTICE && this.opponents['bot_opponent'] && this.opponents['bot_opponent'].isAlive) {
+      const bot = this.opponents['bot_opponent'];
       if (result.hit && result.targetType === 'bot') {
         const isHeadshot = result.hitPart === 'head';
         const damage = isHeadshot ? CONFIG.WEAPONS.SNIPER.HEAD_DAMAGE : CONFIG.WEAPONS.SNIPER.BODY_DAMAGE;
 
-        if (!this.opponent.isProtected) {
-          this.opponent.health = Math.max(0, this.opponent.health - damage);
-          this.opponent.updateNameTag();
+        if (!bot.isProtected) {
+          bot.health = Math.max(0, bot.health - damage);
+          bot.updateNameTag();
 
           this.ui.showHitmarker(isHeadshot);
           this.audio.playHitMarker(isHeadshot);
 
-          const isLethal = this.opponent.health <= 0 || damage >= 100;
+          const isLethal = bot.health <= 0 || damage >= 100;
           if (isLethal) {
-            this.opponent.health = 0;
-            this.opponent.isAlive = false;
+            bot.health = 0;
+            bot.isAlive = false;
 
             const startPos = this.weapon.getBarrelTipWorldPosition();
             const targetPos = result.hitPoint
               ? new Vector3(result.hitPoint.x, result.hitPoint.y, result.hitPoint.z)
-              : this.opponent.rootNode.position.add(new Vector3(0, 1.4, 0));
+              : bot.rootNode.position.add(new Vector3(0, 1.4, 0));
 
             const killInfo = {
               killer: 'You',
-              victim: this.opponent.name,
+              victim: bot.name,
               isHeadshot,
               weaponType: result.weaponType
             };
@@ -880,14 +829,14 @@ export class Game {
               'shooter',
               startPos,
               targetPos,
-              this.opponent,
+              bot,
               isHeadshot,
               killInfo,
               (info) => {
                 this.player.setInputLocked(false);
 
                 this.playerScore++;
-                this.ui.updateScore(this.playerScore, this.enemyScore, 'YOU', this.opponent.name);
+                this.ui.updateScore(this.playerScore, this.enemyScore, 'YOU', bot.name);
                 this.ui.updateKillCounter(this.playerScore, CONFIG.GAME.SCORE_TO_WIN);
                 this.ui.addKillFeedMessage(info.killer, info.victim, info.isHeadshot);
 
@@ -896,7 +845,7 @@ export class Game {
                   this.player.exitPointerLock();
                 } else {
                   setTimeout(() => {
-                    if (this.mode === GAME_MODE.PRACTICE && this.opponent) {
+                    if (this.mode === GAME_MODE.PRACTICE && this.opponents['bot_opponent']) {
                       const playerPos = this.player.camera.position;
                       let bestSpawn = CONFIG.GAME.SPAWNS[0];
                       let maxD = -1;
@@ -908,15 +857,15 @@ export class Game {
                         }
                       }
 
-                      this.opponent.resetRagdoll();
-                      this.opponent.setPositionAndRotation(bestSpawn, bestSpawn.rotY);
-                      this.opponent.health = CONFIG.GAME.MAX_HEALTH;
-                      this.opponent.isAlive = true;
-                      this.opponent.setVisible(true);
-                      this.opponent.setProtected(true);
+                      bot.resetRagdoll();
+                      bot.setPositionAndRotation(bestSpawn, bestSpawn.rotY);
+                      bot.health = CONFIG.GAME.MAX_HEALTH;
+                      bot.isAlive = true;
+                      bot.setVisible(true);
+                      bot.setProtected(true);
 
                       setTimeout(() => {
-                        if (this.opponent) this.opponent.setProtected(false);
+                        if (bot) bot.setProtected(false);
                       }, CONFIG.GAME.SPAWN_PROTECTION_MS);
                     }
                   }, CONFIG.GAME.RESPAWN_DELAY_MS);
@@ -938,6 +887,7 @@ export class Game {
         hit: result.hit || false,
         hitPart: result.hitPart || 'torso',
         hitPoint: result.hitPoint ? { x: result.hitPoint.x, y: result.hitPoint.y, z: result.hitPoint.z } : null,
+        targetId: result.targetId, // CRITICAL: Tells server exactly who was hit in FFA
         targetType: result.targetType
       });
     }
@@ -945,7 +895,7 @@ export class Game {
 
   handlePracticePlayerKilled() {
     this.enemyScore++;
-    this.ui.updateScore(this.playerScore, this.enemyScore, 'YOU', this.opponent ? this.opponent.name : 'BOT');
+    this.ui.updateScore(this.playerScore, this.enemyScore, 'YOU', 'BOT');
     this.ui.addKillFeedMessage('Bot', 'You', false);
 
     if (this.enemyScore >= CONFIG.GAME.SCORE_TO_WIN) {
@@ -954,7 +904,8 @@ export class Game {
     } else {
       setTimeout(() => {
         if (this.mode === GAME_MODE.PRACTICE) {
-          const botPos = this.opponent ? this.opponent.position : new Vector3(0, 0, 0);
+          const bot = this.opponents['bot_opponent'];
+          const botPos = bot ? bot.position : new Vector3(0, 0, 0);
           let bestSpawn = CONFIG.GAME.SPAWNS[0];
           let maxD = -1;
           for (const sp of CONFIG.GAME.SPAWNS) {
@@ -981,10 +932,11 @@ export class Game {
     this.mode = GAME_MODE.NONE;
     this.network.disconnect();
 
-    if (this.opponent) {
-      this.opponent.dispose();
-      this.opponent = null;
+    for (const id in this.opponents) {
+      this.opponents[id].dispose();
     }
+    this.opponents = {};
+
     if (this.killCamVictimBody) {
       this.killCamVictimBody.dispose();
       this.killCamVictimBody = null;
@@ -1062,18 +1014,21 @@ export class Game {
         this.weapon.isReloading
       );
 
-      if (this.mode === GAME_MODE.PRACTICE && this.opponent) {
-        if (!this.bulletCam?.isActive && this.opponent.isAlive && this.botAI) {
-          this.botAI.update(scaledDt, this.coverMeshes);
-        } else if (this.opponent.isRagdoll) {
-          this.opponent.update(scaledDt);
-        }
+      if (this.mode === GAME_MODE.PRACTICE) {
+        const bot = this.opponents['bot_opponent'];
+        if (bot) {
+          if (!this.bulletCam?.isActive && bot.isAlive && this.botAI) {
+            this.botAI.update(scaledDt, this.coverMeshes);
+          } else if (bot.isRagdoll) {
+            bot.update(scaledDt);
+          }
 
-        if (!this.player.isAlive && this.player.health === 0 && !this.practiceDeathHandled) {
-          this.practiceDeathHandled = true;
-          this.handlePracticePlayerKilled();
-        } else if (this.player.isAlive) {
-          this.practiceDeathHandled = false;
+          if (!this.player.isAlive && this.player.health === 0 && !this.practiceDeathHandled) {
+            this.practiceDeathHandled = true;
+            this.handlePracticePlayerKilled();
+          } else if (this.player.isAlive) {
+            this.practiceDeathHandled = false;
+          }
         }
       }
 
@@ -1081,8 +1036,10 @@ export class Game {
         this.bloodEffect.update(rawDtSec);
       }
 
-      if (this.opponent && this.mode === GAME_MODE.ONLINE) {
-        this.opponent.update(scaledDt);
+      if (this.mode === GAME_MODE.ONLINE) {
+        for (const id in this.opponents) {
+          this.opponents[id].update(scaledDt);
+        }
       }
 
       if (this.killCamVictimBody) {
@@ -1104,15 +1061,18 @@ export class Game {
         const cam = this.scene.activeCamera;
         const camStr = cam ? `${cam.name} (${cam.position.x.toFixed(1)}, ${cam.position.y.toFixed(1)}, ${cam.position.z.toFixed(1)})` : 'NONE';
         const glRenderer = (this.engine.getGlInfo ? this.engine.getGlInfo().renderer : 'WebGL') || 'WebGL';
+        
+        let oppCount = 0;
+        for (const id in this.opponents) oppCount++;
 
         this.ui.updateDebugMetrics({
           localId: this.localId || this.network.localId || '--',
-          remoteId: this.remoteId || this.network.remoteId || '--',
+          remoteId: `${oppCount} enemies`,
           sendRate: this.network.sendRate || 0,
           snapRate: this.network.snapshotsPerSecond || 0,
           snapAge: this.network.getLastSnapshotAgeMs(),
-          remotePos: this.opponent ? this.opponent.getDebugPosString() : '--',
-          remoteAnim: this.opponent ? this.opponent.getDebugAnimString() : '--',
+          remotePos: '--',
+          remoteAnim: '--',
           ping: this.network.smoothedPing,
           maxPing: this.network.maxPing,
           jitter: this.network.jitter,

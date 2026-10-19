@@ -1,4 +1,4 @@
-// Server-side Room, Player & Combat Lifecycle Manager
+// Server-side Room, Player & Combat Lifecycle Manager for 4-Player FFA
 const SPAWN_POINTS = [
   { x: -62, y: 1.2, z: -62, rotY: Math.PI / 4 },
   { x: 62, y: 1.2, z: 62, rotY: (5 * Math.PI) / 4 },
@@ -6,7 +6,8 @@ const SPAWN_POINTS = [
   { x: 62, y: 1.2, z: -62, rotY: (3 * Math.PI) / 4 }
 ];
 
-const WIN_SCORE = 10;
+const MAX_PLAYERS = 4;
+const WIN_SCORE = 15; // Increased win score for FFA
 const BODY_DAMAGE = 100;
 const HEAD_DAMAGE = 200;
 const LEG_DAMAGE = 80;
@@ -26,42 +27,38 @@ export class RoomManager {
     this.playerToRoom = new Map();
     this.debugHitboxSubscribers = new Set();
     this.processedShots = new Map();
-    
-    // --- NEW: Matchmaking Queue ---
-    this.matchmakingQueue = []; // Array of { socket, playerName, socketId }
+    this.matchmakingQueue = [];
 
     setInterval(() => this.cleanupInactiveRooms(), 5 * 60 * 1000);
     setInterval(() => this.cleanupProcessedShots(), 10 * 1000);
   }
 
-  // --- NEW: Matchmaking Logic ---
   addToMatchmaking(socket, rawName) {
     const playerName = this.sanitizeName(rawName, 'Player');
-    
-    // Check if already in queue
     if (this.matchmakingQueue.some(p => p.socketId === socket.id)) return;
 
-    // Check if someone is waiting
-    if (this.matchmakingQueue.length > 0) {
-      const opponent = this.matchmakingQueue.shift(); // Remove them from queue
+    this.matchmakingQueue.push({ socket, playerName, socketId: socket.id });
+    socket.emit('matchmaking_status', { status: 'searching', count: this.matchmakingQueue.length, max: MAX_PLAYERS });
+
+    if (this.matchmakingQueue.length >= MAX_PLAYERS) {
+      // We have 4 players! Create a room and start.
+      const playersForMatch = this.matchmakingQueue.splice(0, MAX_PLAYERS);
       
-      // Create room for opponent
-      const res1 = this.createRoom(opponent.socket, opponent.playerName);
-      
-      // Join room for current player
-      const res2 = this.joinRoom(socket, res1.roomCode, playerName);
-      
-      // Notify both players they found a match
-      this.io.to(opponent.socketId).emit('match_found', {
-        ...res1, opponentName: playerName
-      });
-      this.io.to(socket.id).emit('match_found', {
-        ...res2, opponentName: opponent.playerName
-      });
-    } else {
-      // Add to queue and wait
-      this.matchmakingQueue.push({ socket, playerName, socketId: socket.id });
-      socket.emit('matchmaking_status', { status: 'searching' });
+      // Create room with the first player
+      const p1 = playersForMatch[0];
+      const roomRes = this.createRoom(p1.socket, p1.playerName);
+      const roomCode = roomRes.roomCode;
+
+      // Join the other 3 players
+      for (let i = 1; i < playersForMatch.length; i++) {
+        const p = playersForMatch[i];
+        this.joinRoom(p.socket, roomCode, p.playerName);
+      }
+
+      // Notify everyone
+      for (const p of playersForMatch) {
+        this.io.to(p.socketId).emit('match_found', { roomCode });
+      }
     }
   }
 
@@ -136,22 +133,31 @@ export class RoomManager {
     }
   }
 
-  joinRoom(socket, rawCode, rawName = 'Player 2') {
+  joinRoom(socket, rawCode, rawName = 'Player') {
     if (!rawCode || typeof rawCode !== 'string') return { error: 'Invalid room code format' };
     const cleanCode = rawCode.trim().toUpperCase();
     if (cleanCode.length !== 4) return { error: 'Room code must be exactly 4 letters' };
     const room = this.rooms.get(cleanCode);
     if (!room) return { error: 'Room not found' };
-    if (room.players.size >= 2 || room.status !== 'waiting') return { error: 'Room is already full or in match' };
+    if (room.players.size >= MAX_PLAYERS || room.status !== 'waiting') return { error: 'Room is full or in match' };
 
     this.leaveCurrentRoom(socket.id);
-    let playerName = this.sanitizeName(rawName, 'Player 2');
-    const p1 = room.playerList[0];
-    if (playerName.toLowerCase() === p1.name.toLowerCase()) playerName = `${playerName} (2)`;
+    let playerName = this.sanitizeName(rawName, 'Player');
+    
+    // Ensure unique name in room
+    let nameSuffix = 1;
+    let baseName = playerName;
+    while (room.playerList.some(p => p.name.toLowerCase() === playerName.toLowerCase())) {
+      playerName = `${baseName} (${nameSuffix})`;
+      nameSuffix++;
+    }
 
+    const playerNum = room.players.size + 1;
+    const spawnIndex = Math.min(playerNum - 1, 3);
+    
     const player = {
-      socketId: socket.id, playerNumber: 2, name: playerName, health: 100, kills: 0, deaths: 0, isAlive: true, isProtected: false, protectedUntil: 0,
-      position: { ...SPAWN_POINTS[1] }, rotation: { x: 0, y: SPAWN_POINTS[1].rotY }, activeWeapon: 'sniper', isScoped: false, isCrouching: false, isSprinting: false,
+      socketId: socket.id, playerNumber: playerNum, name: playerName, health: 100, kills: 0, deaths: 0, isAlive: true, isProtected: false, protectedUntil: 0,
+      position: { ...SPAWN_POINTS[spawnIndex] }, rotation: { x: 0, y: SPAWN_POINTS[spawnIndex].rotY }, activeWeapon: 'sniper', isScoped: false, isCrouching: false, isSprinting: false,
       rematchReady: false, lastActiveTime: Date.now(), lastShotTime: 0, lastMeleeTime: 0, positionHistory: []
     };
     room.players.set(socket.id, player);
@@ -159,23 +165,23 @@ export class RoomManager {
     room.lastActivity = Date.now();
     this.playerToRoom.set(socket.id, cleanCode);
     socket.join(cleanCode);
-    this.startMatchCountdown(room);
-    return { roomCode: cleanCode, playerNumber: 2, playerName, spawn: SPAWN_POINTS[1] };
+    
+    if (room.players.size === MAX_PLAYERS) {
+      this.startMatchCountdown(room);
+    }
+    
+    return { roomCode: cleanCode, playerNumber: playerNum, playerName, spawn: SPAWN_POINTS[spawnIndex] };
   }
 
   startMatchCountdown(room) {
     room.status = 'countdown';
     let count = 3;
-    const p1 = room.playerList[0];
-    const p2 = room.playerList[1];
     const matchInfo = {
       roomCode: room.code,
-      players: [
-        { socketId: p1.socketId, playerNumber: 1, name: p1.name, spawn: SPAWN_POINTS[0] },
-        { socketId: p2.socketId, playerNumber: 2, name: p2.name, spawn: SPAWN_POINTS[1] }
-      ],
+      players: room.playerList.map(p => ({ socketId: p.socketId, playerNumber: p.playerNumber, name: p.name, spawn: p.position })),
       winScore: WIN_SCORE
     };
+    
     this.io.to(room.code).emit('match_countdown', { count: 3, ...matchInfo });
     room.countdownTimer = setInterval(() => {
       count--;
@@ -194,12 +200,10 @@ export class RoomManager {
           p._hasLoggedStall = false;
         }
         for (const p of room.playerList) {
-          const opp = room.playerList.find(x => x.socketId !== p.socketId) || p;
           this.io.to(p.socketId).emit('match_start', {
-            ...matchInfo, localId: p.socketId, remoteId: opp.socketId, playerId: p.socketId, matchStartServerTime: room.startTime, duration: 600, serverTimestamp: room.startTime
+            ...matchInfo, localId: p.socketId, matchStartServerTime: room.startTime, duration: 600, serverTimestamp: room.startTime
           });
         }
-        this.io.to(room.code).emit('match_start', { ...matchInfo, matchStartServerTime: room.startTime, duration: 600, serverTimestamp: room.startTime });
       }
     }, 1000);
   }
@@ -311,8 +315,9 @@ export class RoomManager {
     if (this.processedShots.has(shotId)) return;
     this.processedShots.set(shotId, now);
 
-    let target = null;
-    for (const [id, p] of room.players) { if (id !== socketId) { target = p; break; } }
+    // FIX: Get target from the exact ID the client hit
+    const targetId = shootData.targetId;
+    const target = room.players.get(targetId);
 
     const weaponType = shootData.weaponType || shooter.activeWeapon || 'sniper';
 
@@ -439,13 +444,17 @@ export class RoomManager {
 
       setTimeout(() => {
         if (!this.rooms.has(room.code)) return;
-        const scores = { p1Kills: room.playerList[0].kills, p2Kills: room.playerList[1].kills };
-        this.io.to(room.code).emit('kill_cam_end', { killId, killerId: shooter.socketId, killerNumber: shooter.playerNumber, victimId: target.socketId, victimNumber: target.playerNumber, hitPart, scores });
-        this.io.to(room.code).emit('player_killed', { killerId: shooter.socketId, killerNumber: shooter.playerNumber, victimId: target.socketId, victimNumber: target.playerNumber, hitPart, scores });
+        
+        // Build current scores for ALL players
+        const scores = {};
+        room.playerList.forEach(p => { scores[p.socketId] = p.kills; });
+
+        this.io.to(room.code).emit('kill_cam_end', { killId, killerId: shooter.socketId, victimId: target.socketId, hitPart, scores });
+        this.io.to(room.code).emit('player_killed', { killerId: shooter.socketId, victimId: target.socketId, hitPart, scores });
 
         if (shooter.kills >= WIN_SCORE) {
           room.status = 'ended';
-          this.io.to(room.code).emit('match_over', { winnerNumber: shooter.playerNumber, winnerName: shooter.name, finalScores: scores });
+          this.io.to(room.code).emit('match_over', { winnerNumber: shooter.playerNumber, winnerName: shooter.name, winnerId: shooter.socketId, finalScores: scores });
         } else {
           this.scheduleRespawn(room, target, shooter);
         }
@@ -486,7 +495,7 @@ export class RoomManager {
     this.io.to(roomCode).emit('rematch_update', { playerNumber: player.playerNumber, ready: true });
 
     const allReady = Array.from(room.players.values()).every(p => p.rematchReady);
-    if (allReady && room.players.size === 2) {
+    if (allReady && room.players.size === MAX_PLAYERS) {
       room.playerList.forEach((p, idx) => {
         p.health = 100; p.kills = 0; p.deaths = 0; p.isAlive = true; p.isProtected = false; p.rematchReady = false; p.activeWeapon = 'sniper';
         p.position = { ...SPAWN_POINTS[idx] }; p.rotation = { x: 0, y: SPAWN_POINTS[idx].rotY }; p.positionHistory = [];
@@ -497,7 +506,7 @@ export class RoomManager {
   }
 
   handleDisconnect(socketId) {
-    this.removeFromMatchmaking(socketId); // <-- Clean up queue
+    this.removeFromMatchmaking(socketId);
     const roomCode = this.playerToRoom.get(socketId);
     this.debugHitboxSubscribers.delete(socketId);
     if (!roomCode) return;
@@ -505,9 +514,10 @@ export class RoomManager {
     this.playerToRoom.delete(socketId);
     if (room) {
       room.players.delete(socketId);
+      room.playerList = room.playerList.filter(p => p.socketId !== socketId);
       this.clearRoomTimers(room);
       if (room.players.size === 0) this.rooms.delete(roomCode);
-      else { this.io.to(roomCode).emit('opponent_left', { message: 'Opponent left the match' }); room.status = 'ended'; }
+      else { this.io.to(roomCode).emit('opponent_left', { message: 'A player left the match' }); room.status = 'ended'; }
     }
   }
 
@@ -598,7 +608,7 @@ export class RoomManager {
       for (const p of room.playerList) {
         if (room.status === 'playing' && p.isAlive) {
           const timeSinceUpdate = now - (p.lastActiveTime || now);
-          if (timeSinceUpdate > 500 && !p._hasLoggedStall) { p._hasLoggedStall = true; console.warn(`[DEBUG NET] Client updates stalled for player "${p.name}" (${p.socketId}) in room ${code} (${timeSinceUpdate}ms since last packet)`); }
+          if (timeSinceUpdate > 500 && !p._hasLoggedStall) { p._hasLoggedStall = true; console.warn(`[DEBUG NET] Client updates stalled for player "${p.name}" in room ${code}`); }
           else if (timeSinceUpdate < 300) p._hasLoggedStall = false;
         }
 
