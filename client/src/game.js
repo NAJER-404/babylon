@@ -89,6 +89,8 @@ export class Game {
     this.scopeOverlay = null;
     this.xrayEffect = null;
     this.bloodEffect = null;
+    this.killCamVictimBody = null; // <-- NEW: Used for victim's 3D ragdoll body
+    
     // Safety net & debug state (Step 1 & 2)
     this.isRenderLoopRunning = false;
     this.lastRenderError = 'None';
@@ -296,7 +298,6 @@ export class Game {
       },
 
       onOpenOnlineModal: () => {
-        // Automatically start socket connection when opening online modal
         this.network.connect();
       },
 
@@ -392,14 +393,12 @@ export class Game {
       this.ui.updateConnectionStatus(status);
     };
 
-    // 3-2-1 Synchronized Countdown sequence
     this.network.onMatchCountdown = (data) => {
       const p1 = data.players?.[0]?.name || 'Player 1';
       const p2 = data.players?.[1]?.name || 'Player 2';
       this.ui.showCountdown(data.count, p1, p2);
     };
 
-    // Both players released at 0
     this.network.onMatchStart = (data) => {
       this.ui.hideCountdown();
       this.startOnlineMatch(data);
@@ -414,7 +413,6 @@ export class Game {
       for (const p of data.players) {
         const pId = p.id || p.socketId;
 
-        // Section A: Snapshot for remoteId goes ONLY to remote opponent; localId goes ONLY to local player
         if (remoteId && pId === remoteId && this.opponent) {
           this.opponent.setServerClockOffset(this.network.serverClockOffset);
           if (!p.timestamp && !p.t) {
@@ -494,7 +492,30 @@ export class Game {
       } else if (isVictim && this.bulletCam) {
         // Victim perspective: cinematic incoming view
         this.player.die();
-        this.bulletCam.start('victim', startVec, hitVec, this.player, isHeadshot, killInfo, () => {});
+        
+        // --- FIX: Spawn a dummy humanoid body for the victim so we can see the ragdoll and X-ray ---
+        if (this.killCamVictimBody) {
+          this.killCamVictimBody.dispose();
+        }
+        const myState = this.player.getSendState();
+        this.killCamVictimBody = new OpponentCharacter(
+          this.scene,
+          this.shadowGenerator,
+          'victim_body_' + myId,
+          this.player.playerNumber,
+          false,
+          this.player.name || 'You'
+        );
+        this.killCamVictimBody.setPositionAndRotation(
+          { x: myState.x, y: myState.y, z: myState.z }, 
+          myState.yaw
+        );
+        
+        if (this.xrayEffect) {
+          this.xrayEffect.attachSkeleton(this.killCamVictimBody);
+        }
+        
+        this.bulletCam.start('victim', startVec, hitVec, this.killCamVictimBody, isHeadshot, killInfo, () => {});
       }
     };
 
@@ -504,7 +525,13 @@ export class Game {
         this.bulletCam.complete();
       }
       this.player.setInputLocked(false);
-      // Section D: Ensure remote character is visible and active after kill cam
+      
+      // Cleanup the temporary victim body
+      if (this.killCamVictimBody) {
+        this.killCamVictimBody.dispose();
+        this.killCamVictimBody = null;
+      }
+
       if (this.opponent) {
         this.opponent.setVisible(true);
       }
@@ -594,7 +621,6 @@ export class Game {
       this.ui.updatePing(ping);
     };
 
-    // Shot result from server (Part 0 debug overlay)
     this.network.onShotResult = (data) => {
       if (data) {
         this.lastShotReason = data.hit
@@ -615,7 +641,6 @@ export class Game {
     }
     this.botAI = null;
 
-    // Create Humanoid Bot Opponent
     this.opponent = new OpponentCharacter(
       this.scene,
       this.shadowGenerator,
@@ -652,7 +677,6 @@ export class Game {
     this.ui.showHUD();
     this.player.requestPointerLock();
 
-    // Step 2 Safety Net Watchdog: verifies active meshes and camera health 2 seconds after match start
     if (this.safetyWatchdogTimer) clearTimeout(this.safetyWatchdogTimer);
     this.safetyWatchdogTimer = setTimeout(() => {
       this.runRenderSafetyCheck();
@@ -670,7 +694,6 @@ export class Game {
     }
     this.botAI = null;
 
-    // Section A: Identity
     this.localId = matchData.localId || this.network.localId || this.network.socket?.id;
     this.remoteId = matchData.remoteId || this.network.remoteId;
 
@@ -721,7 +744,6 @@ export class Game {
       this.opponent.setHitboxesWireframe(true);
     }
 
-    // Section B & D: Launch background 30 Hz send loop (dedicated Web Worker, immune to tab focus loss)
     this.sendSeq = 0;
     this.network.startSendLoop(() => {
       if (this.mode === GAME_MODE.ONLINE && this.player) {
@@ -730,7 +752,6 @@ export class Game {
       }
       return null;
     }, () => {
-      // Process newest snapshot when tab is hidden so state stays fresh
       if (document.hidden && this.mode === GAME_MODE.ONLINE && this.opponent) {
         this.opponent.applyBackgroundTick();
       }
@@ -744,7 +765,6 @@ export class Game {
 
     this.player.requestPointerLock();
 
-    // Step 2 Safety Net Watchdog: verifies active meshes and camera health 2 seconds after online start
     if (this.safetyWatchdogTimer) clearTimeout(this.safetyWatchdogTimer);
     this.safetyWatchdogTimer = setTimeout(() => {
       this.runRenderSafetyCheck();
@@ -790,7 +810,6 @@ export class Game {
     const result = this.weapon.attack(moveState);
     if (!result || !result.fired) return;
 
-    // In Practice Mode:
     if (this.mode === GAME_MODE.PRACTICE && this.opponent && this.opponent.isAlive) {
       if (result.hit && result.targetType === 'bot') {
         const isHeadshot = result.hitPart === 'head';
@@ -875,7 +894,6 @@ export class Game {
       }
     }
 
-    // In Online 1v1 Mode:
     if (this.mode === GAME_MODE.ONLINE) {
       this.network.sendShoot({
         shotId: result.shotId,
@@ -883,12 +901,10 @@ export class Game {
         direction: result.rayDirection || { x: this.player.camera.getForwardRay().direction.x, y: this.player.camera.getForwardRay().direction.y, z: this.player.camera.getForwardRay().direction.z },
         weaponType: result.weaponType,
         timestamp: Date.now(),
-        // --- NEW: Pass hit info to the server for human players ---
         hit: result.hit || false,
         hitPart: result.hitPart || 'torso',
         hitPoint: result.hitPoint ? { x: result.hitPoint.x, y: result.hitPoint.y, z: result.hitPoint.z } : null,
         targetType: result.targetType
-        // -------------------------------------------------------------
       });
     }
   }
@@ -935,6 +951,10 @@ export class Game {
       this.opponent.dispose();
       this.opponent = null;
     }
+    if (this.killCamVictimBody) {
+      this.killCamVictimBody.dispose();
+      this.killCamVictimBody = null;
+    }
     this.botAI = null;
     this.clearServerHitboxMeshes();
 
@@ -953,7 +973,6 @@ export class Game {
       this.serverHitboxMat.disableLighting = true;
     }
 
-    // Updated to match standard part names if needed (e.g., 'torso' instead of 'body')
     ['head', 'torso', 'body', 'legs'].forEach(part => {
       const partData = data[part];
       if (!partData) return;
@@ -987,35 +1006,28 @@ export class Game {
     const rawDtSec = rawDt / 1000;
 
     try {
-      // 1. Slow-motion TimeManager update
       timeManager.update(rawDtSec);
       const scaledDt = timeManager.getDeltaTime(rawDt);
 
-      // 2. Sniper Scope Overlay update
       if (this.scopeOverlay) {
         this.scopeOverlay.update(rawDtSec);
       }
 
-      // 3. Bullet Cam update
       if (this.bulletCam) {
         this.bulletCam.update(rawDtSec);
       }
 
-      // 4. Update weapon recoil, sway, equip and bolt animations
       this.weapon.update(scaledDt, this.player.getMovementState());
       const kickPitch = this.weapon.consumeCameraRecoil();
 
-      // 5. Update local player kinematics & collisions
       this.player.update(scaledDt, this.bulletCam?.isActive ? 0 : kickPitch);
 
-      // 6. Update UI HUD ammo and reload status
       this.ui.updateAmmo(
         this.weapon.magAmmo,
         this.weapon.reserveAmmo,
         this.weapon.isReloading
       );
 
-      // 7. Update Bot AI in Practice Mode
       if (this.mode === GAME_MODE.PRACTICE && this.opponent) {
         if (!this.bulletCam?.isActive && this.opponent.isAlive && this.botAI) {
           this.botAI.update(scaledDt, this.coverMeshes);
@@ -1031,17 +1043,19 @@ export class Game {
         }
       }
 
-      // 8. Update Blood effects
       if (this.bloodEffect) {
         this.bloodEffect.update(rawDtSec);
       }
 
-      // 9. Update Opponent character in Online Mode
       if (this.opponent && this.mode === GAME_MODE.ONLINE) {
         this.opponent.update(scaledDt);
       }
 
-      // 10. Server-Authoritative Match Timer in Online Mode (Section G)
+      // Update temporary victim body for kill cam (if active)
+      if (this.killCamVictimBody) {
+        this.killCamVictimBody.update(scaledDt);
+      }
+
       if (this.mode === GAME_MODE.ONLINE && this.network.matchStartServerTime) {
         this.ui.updateMatchTimerServerAuthoritative(
           this.network.getEstimatedServerTime(),
@@ -1050,7 +1064,6 @@ export class Game {
         );
       }
 
-      // 11. Performance & Telemetry Debug Overlay Update (Section J & Step 2)
       this.isRenderLoopRunning = true;
       this.debugUpdateTimer += rawDt;
       if (this.debugUpdateTimer >= 150) {
